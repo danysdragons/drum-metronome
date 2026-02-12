@@ -64,6 +64,7 @@ const InteractiveMetronome = () => {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const intervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const noiseBufferRef = useRef<AudioBuffer | null>(null);
 
   useEffect(() => {
     const AudioContextClass =
@@ -82,114 +83,151 @@ const InteractiveMetronome = () => {
     };
   }, []);
 
+  const getNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
+    if (noiseBufferRef.current) {
+      return noiseBufferRef.current;
+    }
+
+    const buffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < channel.length; i += 1) {
+      channel[i] = Math.random() * 2 - 1;
+    }
+
+    noiseBufferRef.current = buffer;
+    return buffer;
+  };
+
   const playSound = (soundType: SoundType, beatVolume: number) => {
     const ctx = audioContextRef.current;
     if (!ctx) {
       return;
     }
 
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
     const finalVolume = masterVolume * beatVolume;
+    if (finalVolume <= 0.0001) {
+      return;
+    }
+
+    const now = ctx.currentTime;
+    const floorGain = 0.0001;
+    const minFreq = 20;
+
+    const tone = (
+      type: OscillatorType,
+      startFrequency: number,
+      endFrequency: number,
+      gain: number,
+      duration: number,
+      offset = 0,
+      attack = 0.002
+    ) => {
+      const startAt = now + offset;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+
+      osc.type = type;
+      osc.frequency.setValueAtTime(Math.max(minFreq, startFrequency), startAt);
+      osc.frequency.exponentialRampToValueAtTime(
+        Math.max(minFreq, endFrequency),
+        startAt + duration
+      );
+
+      env.gain.setValueAtTime(floorGain, startAt);
+      env.gain.exponentialRampToValueAtTime(Math.max(floorGain, gain), startAt + attack);
+      env.gain.exponentialRampToValueAtTime(floorGain, startAt + duration);
+
+      osc.connect(env);
+      env.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + duration + 0.01);
+    };
+
+    const noise = (
+      gain: number,
+      duration: number,
+      filterType: BiquadFilterType,
+      frequency: number,
+      q = 1,
+      offset = 0
+    ) => {
+      const startAt = now + offset;
+      const source = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const env = ctx.createGain();
+
+      source.buffer = getNoiseBuffer(ctx);
+      filter.type = filterType;
+      filter.frequency.setValueAtTime(Math.max(minFreq, frequency), startAt);
+      filter.Q.setValueAtTime(Math.max(0.0001, q), startAt);
+
+      env.gain.setValueAtTime(Math.max(floorGain, gain), startAt);
+      env.gain.exponentialRampToValueAtTime(floorGain, startAt + duration);
+
+      source.connect(filter);
+      filter.connect(env);
+      env.connect(ctx.destination);
+      source.start(startAt);
+      source.stop(startAt + duration + 0.01);
+    };
 
     switch (soundType) {
       case 'kick':
-        oscillator.frequency.value = 60;
-        gainNode.gain.setValueAtTime(0.6 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.2);
-        oscillator.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.05);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.2);
+        tone('sine', 150, 44, 0.95 * finalVolume, 0.24);
+        tone('triangle', 75, 38, 0.35 * finalVolume, 0.19);
+        noise(0.16 * finalVolume, 0.015, 'highpass', 1900, 0.7);
         break;
       case 'snare':
-        oscillator.frequency.value = 200;
-        oscillator.type = 'triangle';
-        gainNode.gain.setValueAtTime(0.4 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.08);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.08);
+        noise(0.62 * finalVolume, 0.17, 'bandpass', 1800, 0.75);
+        noise(0.28 * finalVolume, 0.1, 'highpass', 3500, 0.9);
+        tone('triangle', 220, 145, 0.28 * finalVolume, 0.12);
         break;
       case 'hihat':
-        oscillator.frequency.value = 8000;
-        oscillator.type = 'square';
-        gainNode.gain.setValueAtTime(0.15 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.03);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.03);
+        noise(0.32 * finalVolume, 0.055, 'highpass', 7200, 0.7);
+        noise(0.16 * finalVolume, 0.045, 'bandpass', 9800, 3.2);
+        tone('square', 6200, 4200, 0.07 * finalVolume, 0.03, 0.002, 0.001);
         break;
       case 'tom':
-        oscillator.frequency.value = 120;
-        oscillator.type = 'sine';
-        gainNode.gain.setValueAtTime(0.5 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.15);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.15);
+        tone('sine', 185, 88, 0.78 * finalVolume, 0.22);
+        tone('triangle', 240, 130, 0.22 * finalVolume, 0.18);
+        noise(0.05 * finalVolume, 0.03, 'bandpass', 1200, 1);
         break;
       case 'clap':
-        oscillator.frequency.value = 1200;
-        oscillator.type = 'square';
-        gainNode.gain.setValueAtTime(0.35 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.05);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.05);
+        noise(0.26 * finalVolume, 0.018, 'bandpass', 1700, 0.6);
+        noise(0.22 * finalVolume, 0.018, 'bandpass', 1700, 0.6, 0.012);
+        noise(0.18 * finalVolume, 0.018, 'bandpass', 1700, 0.6, 0.024);
+        noise(0.2 * finalVolume, 0.11, 'highpass', 1200, 0.8, 0.03);
         break;
       case 'click':
-        oscillator.frequency.value = 1000;
-        gainNode.gain.setValueAtTime(0.3 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.05);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.05);
+        tone('square', 2400, 1450, 0.23 * finalVolume, 0.025, 0, 0.001);
+        noise(0.12 * finalVolume, 0.012, 'highpass', 5000, 1.2);
         break;
       case 'drum':
-        oscillator.frequency.value = 80;
-        gainNode.gain.setValueAtTime(0.5 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.1);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.1);
+        tone('sine', 120, 52, 0.75 * finalVolume, 0.2);
+        noise(0.14 * finalVolume, 0.06, 'lowpass', 900, 0.8);
         break;
       case 'chime':
-        oscillator.frequency.value = 1500;
-        gainNode.gain.setValueAtTime(0.2 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.3);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.3);
+        tone('sine', 1420, 1390, 0.23 * finalVolume, 0.46);
+        tone('sine', 2130, 2090, 0.14 * finalVolume, 0.35);
+        tone('sine', 2840, 2800, 0.1 * finalVolume, 0.25);
         break;
       case 'wood':
-        oscillator.frequency.value = 500;
-        oscillator.type = 'square';
-        gainNode.gain.setValueAtTime(0.3 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.04);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.04);
+        tone('triangle', 720, 430, 0.25 * finalVolume, 0.06, 0, 0.001);
+        noise(0.11 * finalVolume, 0.03, 'bandpass', 2300, 1.2);
         break;
       case 'cowbell':
-        oscillator.frequency.value = 800;
-        oscillator.type = 'square';
-        gainNode.gain.setValueAtTime(0.4 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.15);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.15);
+        tone('square', 560, 520, 0.22 * finalVolume, 0.22, 0, 0.001);
+        tone('square', 845, 810, 0.2 * finalVolume, 0.18, 0, 0.001);
+        noise(0.07 * finalVolume, 0.05, 'bandpass', 2200, 1.5);
         break;
       case 'bell':
-        oscillator.frequency.value = 2000;
-        oscillator.type = 'sine';
-        gainNode.gain.setValueAtTime(0.25 * finalVolume, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.4);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.4);
+        tone('sine', 1000, 995, 0.24 * finalVolume, 0.64);
+        tone('sine', 1490, 1470, 0.16 * finalVolume, 0.5);
+        tone('sine', 2210, 2190, 0.09 * finalVolume, 0.38);
         break;
       case 'beep':
-        oscillator.frequency.value = 440;
-        oscillator.type = 'square';
-        gainNode.gain.setValueAtTime(0.2 * finalVolume, ctx.currentTime);
-        gainNode.gain.setValueAtTime(0.2 * finalVolume, ctx.currentTime + 0.08);
-        gainNode.gain.exponentialRampToValueAtTime(0.01 * finalVolume, ctx.currentTime + 0.1);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.1);
+        tone('square', 440, 432, 0.22 * finalVolume, 0.11, 0, 0.002);
+        tone('sine', 880, 865, 0.08 * finalVolume, 0.08, 0.01, 0.002);
         break;
     }
   };
@@ -255,6 +293,9 @@ const InteractiveMetronome = () => {
   }, [isPlaying, bpm, beatPatterns, masterVolume, subdivisionsPerBeat]);
 
   const togglePlay = () => {
+    if (!isPlaying && audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
     setIsPlaying(!isPlaying);
   };
 
