@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node-terminal",
+            "request": "launch",
+            "name": "Start Vite Dev Server",
+            "command": "npm run dev"
+        },
+        {
+            "type": "pwa-chrome",
+            "request": "launch",
+            "name": "Debug Metronome in Chrome",
+            "url": "http://localhost:8080",
+            "webRoot": "${workspaceFolder}"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Run + Debug Metronome",
+            "configurations": [
+                "Start Vite Dev Server",
+                "Debug Metronome in Chrome"
+            ]
+        }
+    ]
+}
