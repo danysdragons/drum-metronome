@@ -37,6 +37,9 @@ interface Preset {
 }
 
 const InteractiveMetronome = () => {
+  const LOOKAHEAD_MS = 25;
+  const SCHEDULE_AHEAD_TIME_SECONDS = 0.12;
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(117);
   const [currentBeat, setCurrentBeat] = useState(0);
@@ -45,6 +48,7 @@ const InteractiveMetronome = () => {
   const [masterVolume, setMasterVolume] = useState(0.7);
   const [subdivisionsPerBeat, setSubdivisionsPerBeat] = useState(2);
   const [numMainBeats, setNumMainBeats] = useState(4);
+  const [audioError, setAudioError] = useState<string | null>(null);
   
   const [beatPatterns, setBeatPatterns] = useState<BeatPattern[]>([
     { beat: '1', isMainBeat: true, sounds: [{ type: 'kick', volume: 1.0 }, { type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
@@ -63,25 +67,32 @@ const InteractiveMetronome = () => {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const intervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const schedulerIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const beatIndexRef = useRef(0);
+  const nextNoteTimeRef = useRef(0);
+  const scheduledVisualTimersRef = useRef<Set<number>>(new Set());
+  const pulseTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
+  const beatPatternsRef = useRef(beatPatterns);
+  const bpmRef = useRef(bpm);
+  const masterVolumeRef = useRef(masterVolume);
+  const subdivisionsPerBeatRef = useRef(subdivisionsPerBeat);
 
   useEffect(() => {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    beatPatternsRef.current = beatPatterns;
+  }, [beatPatterns]);
 
-    if (AudioContextClass) {
-      audioContextRef.current = new AudioContextClass();
-    }
+  useEffect(() => {
+    bpmRef.current = bpm;
+  }, [bpm]);
 
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (audioContextRef.current) {
-        void audioContextRef.current.close();
-      }
-    };
-  }, []);
+  useEffect(() => {
+    masterVolumeRef.current = masterVolume;
+  }, [masterVolume]);
+
+  useEffect(() => {
+    subdivisionsPerBeatRef.current = subdivisionsPerBeat;
+  }, [subdivisionsPerBeat]);
 
   const getNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
     if (noiseBufferRef.current) {
@@ -98,18 +109,43 @@ const InteractiveMetronome = () => {
     return buffer;
   };
 
-  const playSound = (soundType: SoundType, beatVolume: number) => {
-    const ctx = audioContextRef.current;
+  const ensureAudioContext = (): AudioContext | null => {
+    if (audioContextRef.current) {
+      return audioContextRef.current;
+    }
+
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextClass) {
+      setAudioError('Audio is not supported in this browser.');
+      return null;
+    }
+
+    audioContextRef.current = new AudioContextClass();
+    return audioContextRef.current;
+  };
+
+  const clearScheduledVisualTimers = () => {
+    for (const timerId of scheduledVisualTimersRef.current) {
+      clearTimeout(timerId);
+    }
+    scheduledVisualTimersRef.current.clear();
+  };
+
+  const playSound = (soundType: SoundType, beatVolume: number, startTime?: number) => {
+    const ctx = ensureAudioContext();
     if (!ctx) {
       return;
     }
 
-    const finalVolume = masterVolume * beatVolume;
+    const finalVolume = masterVolumeRef.current * beatVolume;
     if (finalVolume <= 0.0001) {
       return;
     }
 
-    const now = ctx.currentTime;
+    const now = startTime ?? ctx.currentTime;
     const floorGain = 0.0001;
     const minFreq = 20;
 
@@ -232,6 +268,88 @@ const InteractiveMetronome = () => {
     }
   };
 
+  const scheduleVisualPulse = (beatIndex: number, beatTime: number, currentAudioTime: number) => {
+    const delayMs = Math.max(0, (beatTime - currentAudioTime) * 1000);
+    const timerId = window.setTimeout(() => {
+      scheduledVisualTimersRef.current.delete(timerId);
+      setCurrentBeat(beatIndex);
+      setVisualPulse(true);
+
+      if (pulseTimeoutRef.current) {
+        clearTimeout(pulseTimeoutRef.current);
+      }
+
+      pulseTimeoutRef.current = window.setTimeout(() => {
+        setVisualPulse(false);
+        pulseTimeoutRef.current = null;
+      }, 50);
+    }, delayMs);
+
+    scheduledVisualTimersRef.current.add(timerId);
+  };
+
+  const stopTransport = () => {
+    if (schedulerIntervalRef.current) {
+      clearInterval(schedulerIntervalRef.current);
+      schedulerIntervalRef.current = null;
+    }
+
+    clearScheduledVisualTimers();
+
+    if (pulseTimeoutRef.current) {
+      clearTimeout(pulseTimeoutRef.current);
+      pulseTimeoutRef.current = null;
+    }
+
+    beatIndexRef.current = 0;
+    nextNoteTimeRef.current = 0;
+    setCurrentBeat(0);
+    setVisualPulse(false);
+  };
+
+  const scheduleAudioTick = () => {
+    const ctx = audioContextRef.current;
+    if (!ctx) {
+      return;
+    }
+
+    const activePatterns = beatPatternsRef.current;
+    if (!activePatterns.length) {
+      return;
+    }
+
+    while (nextNoteTimeRef.current < ctx.currentTime + SCHEDULE_AHEAD_TIME_SECONDS) {
+      const beatIndex = beatIndexRef.current % activePatterns.length;
+      const beat = activePatterns[beatIndex];
+      beat.sounds.forEach((sound) => {
+        playSound(sound.type, sound.volume, nextNoteTimeRef.current);
+      });
+      scheduleVisualPulse(beatIndex, nextNoteTimeRef.current, ctx.currentTime);
+
+      const safeBpm = Math.max(0.1, bpmRef.current);
+      const safeSubdivisions = Math.max(1, subdivisionsPerBeatRef.current);
+      const secondsPerSubdivision = 60 / safeBpm / safeSubdivisions;
+
+      nextNoteTimeRef.current += secondsPerSubdivision;
+      beatIndexRef.current = (beatIndexRef.current + 1) % activePatterns.length;
+    }
+  };
+
+  const startTransport = () => {
+    const ctx = audioContextRef.current;
+    if (!ctx) {
+      return;
+    }
+
+    stopTransport();
+    beatIndexRef.current = 0;
+    nextNoteTimeRef.current = ctx.currentTime + 0.03;
+    schedulerIntervalRef.current = window.setInterval(scheduleAudioTick, LOOKAHEAD_MS);
+    scheduleAudioTick();
+  };
+
+  const clampSubdivisions = (value: number): number => Math.max(1, Math.min(4, value));
+
   const generateBeatPattern = (mainBeats: number, subdivisions: number): BeatPattern[] => {
     const pattern: BeatPattern[] = [];
     const subdivisionLabels: Record<number, string[]> = {
@@ -240,11 +358,13 @@ const InteractiveMetronome = () => {
       3: ['', '&', 'a'],
       4: ['', 'e', '&', 'a']
     };
+    const safeSubdivisions = clampSubdivisions(subdivisions);
+    const labels = subdivisionLabels[safeSubdivisions] ?? subdivisionLabels[2];
     
     for (let i = 1; i <= mainBeats; i++) {
-      for (let j = 0; j < subdivisions; j++) {
+      for (let j = 0; j < safeSubdivisions; j++) {
         const isMain = j === 0;
-        const label = isMain ? String(i) : subdivisionLabels[subdivisions][j];
+        const label = isMain ? String(i) : labels[j] ?? '&';
         pattern.push({
           beat: label,
           isMainBeat: isMain,
@@ -257,8 +377,9 @@ const InteractiveMetronome = () => {
   };
 
   const updateSubdivisions = (newSubdivisions: number) => {
-    setSubdivisionsPerBeat(newSubdivisions);
-    setBeatPatterns(generateBeatPattern(numMainBeats, newSubdivisions));
+    const safeSubdivisions = clampSubdivisions(newSubdivisions);
+    setSubdivisionsPerBeat(safeSubdivisions);
+    setBeatPatterns(generateBeatPattern(numMainBeats, safeSubdivisions));
   };
 
   const updateMainBeats = (newMainBeats: number) => {
@@ -267,36 +388,48 @@ const InteractiveMetronome = () => {
   };
 
   useEffect(() => {
-    if (isPlaying) {
-      const interval = 60000 / bpm / subdivisionsPerBeat;
-      let beatIndex = 0;
-
-      intervalRef.current = setInterval(() => {
-        setCurrentBeat(beatIndex);
-        setVisualPulse(true);
-        setTimeout(() => setVisualPulse(false), 50);
-        beatPatterns[beatIndex].sounds.forEach(sound => {
-          playSound(sound.type, sound.volume);
-        });
-        beatIndex = (beatIndex + 1) % beatPatterns.length;
-      }, interval);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        setCurrentBeat(0);
-      }
+    if (!isPlaying) {
+      stopTransport();
+      return;
     }
 
+    startTransport();
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      stopTransport();
     };
-  }, [isPlaying, bpm, beatPatterns, masterVolume, subdivisionsPerBeat]);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    return () => {
+      stopTransport();
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+      }
+    };
+  }, []);
 
   const togglePlay = () => {
-    if (!isPlaying && audioContextRef.current?.state === 'suspended') {
-      void audioContextRef.current.resume();
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
     }
-    setIsPlaying(!isPlaying);
+
+    const ctx = ensureAudioContext();
+    if (!ctx) {
+      setIsPlaying(false);
+      return;
+    }
+
+    const resumePromise = ctx.state === 'suspended' ? ctx.resume() : Promise.resolve();
+    void resumePromise
+      .then(() => {
+        setAudioError(null);
+        setIsPlaying(true);
+      })
+      .catch(() => {
+        setAudioError('Unable to start audio. Check autoplay/browser audio settings.');
+        setIsPlaying(false);
+      });
   };
 
   const addSoundToBeat = (beatIndex: number) => {
@@ -400,6 +533,11 @@ const InteractiveMetronome = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white p-8">
       <div className="max-w-6xl mx-auto">
         <h1 className="text-4xl font-bold text-center mb-8">Interactive Metronome</h1>
+        {audioError && (
+          <div className="mb-4 rounded border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+            {audioError}
+          </div>
+        )}
         
         <div className="bg-slate-800 rounded-lg p-6 shadow-xl mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
