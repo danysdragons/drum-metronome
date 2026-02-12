@@ -30,6 +30,7 @@ interface BeatPattern {
 }
 
 interface Preset {
+  id: string;
   name: string;
   beatPatterns: BeatPattern[];
   subdivisionsPerBeat: number;
@@ -62,7 +63,7 @@ const InteractiveMetronome = () => {
   ]);
   
   const [presets, setPresets] = useState<Preset[]>([]);
-  const [selectedPreset, setSelectedPreset] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState('');
   const [newPresetName, setNewPresetName] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
@@ -433,73 +434,135 @@ const InteractiveMetronome = () => {
   };
 
   const addSoundToBeat = (beatIndex: number) => {
-    const newPatterns = [...beatPatterns];
-    newPatterns[beatIndex].sounds.push({ type: 'click', volume: 0.7 });
-    setBeatPatterns(newPatterns);
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, index) =>
+        index === beatIndex
+          ? { ...pattern, sounds: [...pattern.sounds, { type: 'click', volume: 0.7 }] }
+          : pattern
+      )
+    );
   };
 
   const removeSoundFromBeat = (beatIndex: number, soundIndex: number) => {
-    const newPatterns = [...beatPatterns];
-    if (newPatterns[beatIndex].sounds.length > 1) {
-      newPatterns[beatIndex].sounds.splice(soundIndex, 1);
-      setBeatPatterns(newPatterns);
-    }
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, index) => {
+        if (index !== beatIndex || pattern.sounds.length <= 1) {
+          return pattern;
+        }
+
+        return {
+          ...pattern,
+          sounds: pattern.sounds.filter((_, indexToRemove) => indexToRemove !== soundIndex)
+        };
+      })
+    );
   };
 
   const updateBeatSoundType = (beatIndex: number, soundIndex: number, newType: SoundType) => {
-    const newPatterns = [...beatPatterns];
-    newPatterns[beatIndex].sounds[soundIndex].type = newType;
-    setBeatPatterns(newPatterns);
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, index) =>
+        index === beatIndex
+          ? {
+              ...pattern,
+              sounds: pattern.sounds.map((sound, currentSoundIndex) =>
+                currentSoundIndex === soundIndex ? { ...sound, type: newType } : sound
+              )
+            }
+          : pattern
+      )
+    );
   };
 
   const updateBeatSoundVolume = (beatIndex: number, soundIndex: number, newVolume: number) => {
-    const newPatterns = [...beatPatterns];
-    newPatterns[beatIndex].sounds[soundIndex].volume = newVolume;
-    setBeatPatterns(newPatterns);
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, index) =>
+        index === beatIndex
+          ? {
+              ...pattern,
+              sounds: pattern.sounds.map((sound, currentSoundIndex) =>
+                currentSoundIndex === soundIndex ? { ...sound, volume: newVolume } : sound
+              )
+            }
+          : pattern
+      )
+    );
   };
 
   const updateBeatColor = (index: number, color: string) => {
-    const newPatterns = [...beatPatterns];
-    newPatterns[index].color = color;
-    setBeatPatterns(newPatterns);
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, patternIndex) =>
+        patternIndex === index ? { ...pattern, color } : pattern
+      )
+    );
   };
 
   const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
     JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
 
+  const buildUniquePresetName = (requestedName: string): string => {
+    const normalizedRequestedName = requestedName.trim();
+    if (!normalizedRequestedName) {
+      return '';
+    }
+
+    const existingNames = new Set(presets.map((preset) => preset.name.toLowerCase()));
+    if (!existingNames.has(normalizedRequestedName.toLowerCase())) {
+      return normalizedRequestedName;
+    }
+
+    let suffix = 2;
+    let candidateName = `${normalizedRequestedName} (${suffix})`;
+    while (existingNames.has(candidateName.toLowerCase())) {
+      suffix += 1;
+      candidateName = `${normalizedRequestedName} (${suffix})`;
+    }
+
+    return candidateName;
+  };
+
+  const createPresetId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  };
+
   const savePreset = () => {
-    if (newPresetName.trim()) {
+    const uniquePresetName = buildUniquePresetName(newPresetName);
+    if (uniquePresetName) {
       const preset: Preset = {
-        name: newPresetName.trim(),
+        id: createPresetId(),
+        name: uniquePresetName,
         beatPatterns: clonePatterns(beatPatterns),
         subdivisionsPerBeat,
         numMainBeats
       };
-      setPresets([...presets, preset]);
+      setPresets((previousPresets) => [...previousPresets, preset]);
       setNewPresetName('');
       setShowSaveDialog(false);
-      setSelectedPreset(preset.name);
+      setSelectedPresetId(preset.id);
     }
   };
 
-  const loadPreset = (presetName: string) => {
-    if (presetName === '') {
-      setSelectedPreset('');
+  const loadPreset = (presetId: string) => {
+    if (presetId === '') {
+      setSelectedPresetId('');
       return;
     }
-    const preset = presets.find(p => p.name === presetName);
+    const preset = presets.find((p) => p.id === presetId);
     if (preset) {
       setBeatPatterns(clonePatterns(preset.beatPatterns));
       setSubdivisionsPerBeat(preset.subdivisionsPerBeat);
       setNumMainBeats(preset.numMainBeats);
-      setSelectedPreset(presetName);
+      setSelectedPresetId(preset.id);
     }
   };
 
-  const deletePreset = (presetName: string) => {
-    setPresets(presets.filter(p => p.name !== presetName));
-    if (selectedPreset === presetName) {
-      setSelectedPreset('');
+  const deletePreset = (presetId: string) => {
+    setPresets((previousPresets) => previousPresets.filter((preset) => preset.id !== presetId));
+    if (selectedPresetId === presetId) {
+      setSelectedPresetId('');
     }
   };
 
@@ -664,18 +727,20 @@ const InteractiveMetronome = () => {
               <div className="flex gap-2 items-center">
                 <label className="text-sm text-gray-400">Preset:</label>
                 <select
-                  value={selectedPreset}
+                  value={selectedPresetId}
                   onChange={(e) => loadPreset(e.target.value)}
                   className="bg-slate-700 text-white px-3 py-2 rounded"
                 >
                   <option value="">No preset selected</option>
-                  {presets.map(preset => (
-                    <option key={preset.name} value={preset.name}>{preset.name}</option>
+                  {presets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </option>
                   ))}
                 </select>
-                {selectedPreset && (
+                {selectedPresetId && (
                   <button
-                    onClick={() => deletePreset(selectedPreset)}
+                    onClick={() => deletePreset(selectedPresetId)}
                     className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors"
                     title="Delete preset"
                   >
