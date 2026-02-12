@@ -37,6 +37,58 @@ interface Preset {
   numMainBeats: number;
 }
 
+export const clampSubdivisions = (value: number): number => Math.max(1, Math.min(4, value));
+
+export const generateBeatPattern = (mainBeats: number, subdivisions: number): BeatPattern[] => {
+  const pattern: BeatPattern[] = [];
+  const subdivisionLabels: Record<number, string[]> = {
+    1: [''],
+    2: ['', '&'],
+    3: ['', '&', 'a'],
+    4: ['', 'e', '&', 'a']
+  };
+  const safeSubdivisions = clampSubdivisions(subdivisions);
+  const labels = subdivisionLabels[safeSubdivisions] ?? subdivisionLabels[2];
+  
+  for (let i = 1; i <= mainBeats; i++) {
+    for (let j = 0; j < safeSubdivisions; j++) {
+      const isMain = j === 0;
+      const label = isMain ? String(i) : labels[j] ?? '&';
+      pattern.push({
+        beat: label,
+        isMainBeat: isMain,
+        sounds: [{ type: 'click', volume: 0.7 }],
+        color: 'bg-blue-500'
+      });
+    }
+  }
+  return pattern;
+};
+
+export const buildUniquePresetName = (
+  requestedName: string,
+  existingPresetNames: string[]
+): string => {
+  const normalizedRequestedName = requestedName.trim();
+  if (!normalizedRequestedName) {
+    return '';
+  }
+
+  const existingNames = new Set(existingPresetNames.map((name) => name.toLowerCase()));
+  if (!existingNames.has(normalizedRequestedName.toLowerCase())) {
+    return normalizedRequestedName;
+  }
+
+  let suffix = 2;
+  let candidateName = `${normalizedRequestedName} (${suffix})`;
+  while (existingNames.has(candidateName.toLowerCase())) {
+    suffix += 1;
+    candidateName = `${normalizedRequestedName} (${suffix})`;
+  }
+
+  return candidateName;
+};
+
 const InteractiveMetronome = () => {
   const LOOKAHEAD_MS = 25;
   const SCHEDULE_AHEAD_TIME_SECONDS = 0.12;
@@ -68,11 +120,11 @@ const InteractiveMetronome = () => {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const schedulerIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const schedulerIntervalRef = useRef<number | null>(null);
   const beatIndexRef = useRef(0);
   const nextNoteTimeRef = useRef(0);
   const scheduledVisualTimersRef = useRef<Set<number>>(new Set());
-  const pulseTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const pulseTimeoutRef = useRef<number | null>(null);
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
   const beatPatternsRef = useRef(beatPatterns);
   const bpmRef = useRef(bpm);
@@ -130,7 +182,7 @@ const InteractiveMetronome = () => {
 
   const clearScheduledVisualTimers = () => {
     for (const timerId of scheduledVisualTimersRef.current) {
-      clearTimeout(timerId);
+      window.clearTimeout(timerId);
     }
     scheduledVisualTimersRef.current.clear();
   };
@@ -277,7 +329,7 @@ const InteractiveMetronome = () => {
       setVisualPulse(true);
 
       if (pulseTimeoutRef.current) {
-        clearTimeout(pulseTimeoutRef.current);
+        window.clearTimeout(pulseTimeoutRef.current);
       }
 
       pulseTimeoutRef.current = window.setTimeout(() => {
@@ -291,14 +343,14 @@ const InteractiveMetronome = () => {
 
   const stopTransport = () => {
     if (schedulerIntervalRef.current) {
-      clearInterval(schedulerIntervalRef.current);
+      window.clearInterval(schedulerIntervalRef.current);
       schedulerIntervalRef.current = null;
     }
 
     clearScheduledVisualTimers();
 
     if (pulseTimeoutRef.current) {
-      clearTimeout(pulseTimeoutRef.current);
+      window.clearTimeout(pulseTimeoutRef.current);
       pulseTimeoutRef.current = null;
     }
 
@@ -347,34 +399,6 @@ const InteractiveMetronome = () => {
     nextNoteTimeRef.current = ctx.currentTime + 0.03;
     schedulerIntervalRef.current = window.setInterval(scheduleAudioTick, LOOKAHEAD_MS);
     scheduleAudioTick();
-  };
-
-  const clampSubdivisions = (value: number): number => Math.max(1, Math.min(4, value));
-
-  const generateBeatPattern = (mainBeats: number, subdivisions: number): BeatPattern[] => {
-    const pattern: BeatPattern[] = [];
-    const subdivisionLabels: Record<number, string[]> = {
-      1: [''],
-      2: ['', '&'],
-      3: ['', '&', 'a'],
-      4: ['', 'e', '&', 'a']
-    };
-    const safeSubdivisions = clampSubdivisions(subdivisions);
-    const labels = subdivisionLabels[safeSubdivisions] ?? subdivisionLabels[2];
-    
-    for (let i = 1; i <= mainBeats; i++) {
-      for (let j = 0; j < safeSubdivisions; j++) {
-        const isMain = j === 0;
-        const label = isMain ? String(i) : labels[j] ?? '&';
-        pattern.push({
-          beat: label,
-          isMainBeat: isMain,
-          sounds: [{ type: 'click', volume: 0.7 }],
-          color: 'bg-blue-500'
-        });
-      }
-    }
-    return pattern;
   };
 
   const updateSubdivisions = (newSubdivisions: number) => {
@@ -499,27 +523,6 @@ const InteractiveMetronome = () => {
   const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
     JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
 
-  const buildUniquePresetName = (requestedName: string): string => {
-    const normalizedRequestedName = requestedName.trim();
-    if (!normalizedRequestedName) {
-      return '';
-    }
-
-    const existingNames = new Set(presets.map((preset) => preset.name.toLowerCase()));
-    if (!existingNames.has(normalizedRequestedName.toLowerCase())) {
-      return normalizedRequestedName;
-    }
-
-    let suffix = 2;
-    let candidateName = `${normalizedRequestedName} (${suffix})`;
-    while (existingNames.has(candidateName.toLowerCase())) {
-      suffix += 1;
-      candidateName = `${normalizedRequestedName} (${suffix})`;
-    }
-
-    return candidateName;
-  };
-
   const createPresetId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -529,7 +532,10 @@ const InteractiveMetronome = () => {
   };
 
   const savePreset = () => {
-    const uniquePresetName = buildUniquePresetName(newPresetName);
+    const uniquePresetName = buildUniquePresetName(
+      newPresetName,
+      presets.map((preset) => preset.name)
+    );
     if (uniquePresetName) {
       const preset: Preset = {
         id: createPresetId(),
@@ -597,7 +603,10 @@ const InteractiveMetronome = () => {
       <div className="max-w-6xl mx-auto">
         <h1 className="text-4xl font-bold text-center mb-8">Interactive Metronome</h1>
         {audioError && (
-          <div className="mb-4 rounded border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+          <div
+            role="alert"
+            className="mb-4 rounded border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+          >
             {audioError}
           </div>
         )}
@@ -607,6 +616,7 @@ const InteractiveMetronome = () => {
             <div className="flex flex-col items-center justify-center">
               <button
                 onClick={togglePlay}
+                aria-label={isPlaying ? 'Pause metronome' : 'Start metronome'}
                 className="bg-blue-600 hover:bg-blue-700 rounded-full p-6 transition-colors mb-2"
               >
                 {isPlaying ? <Pause size={32} /> : <Play size={32} />}
@@ -741,6 +751,7 @@ const InteractiveMetronome = () => {
                 {selectedPresetId && (
                   <button
                     onClick={() => deletePreset(selectedPresetId)}
+                    aria-label="Delete selected preset"
                     className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors"
                     title="Delete preset"
                   >
@@ -780,6 +791,7 @@ const InteractiveMetronome = () => {
                   setShowSaveDialog(false);
                   setNewPresetName('');
                 }}
+                aria-label="Close save preset dialog"
                 className="bg-gray-600 hover:bg-gray-700 rounded p-2 transition-colors"
               >
                 <X size={20} />
@@ -838,6 +850,7 @@ const InteractiveMetronome = () => {
                         {pattern.sounds.length > 1 && (
                           <button
                             onClick={() => removeSoundFromBeat(beatIndex, soundIndex)}
+                            aria-label={`Remove sound ${soundIndex + 1} from beat ${pattern.beat}`}
                             className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors mt-4"
                             title="Remove sound"
                           >
