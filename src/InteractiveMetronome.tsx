@@ -37,6 +37,280 @@ interface Preset {
   numMainBeats: number;
 }
 
+export interface PersistedMetronomeState {
+  version: number;
+  bpm: number;
+  masterVolume: number;
+  visualShape: VisualShape;
+  subdivisionsPerBeat: number;
+  numMainBeats: number;
+  beatPatterns: BeatPattern[];
+  presets: Preset[];
+  selectedPresetId: string;
+}
+
+export const PERSISTENCE_VERSION = 1;
+const STORAGE_KEY = 'drum-metronome/state/v1';
+const MIN_BPM = 0.1;
+const MAX_BPM = 300;
+const MIN_MAIN_BEATS = 1;
+const MAX_MAIN_BEATS = 16;
+const DEFAULT_BPM = 117;
+const DEFAULT_MASTER_VOLUME = 0.7;
+const DEFAULT_VISUAL_SHAPE: VisualShape = 'circle';
+const DEFAULT_SUBDIVISIONS = 2;
+const DEFAULT_MAIN_BEATS = 4;
+const DEFAULT_COLOR = 'bg-blue-500';
+
+const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
+  {
+    beat: '1',
+    isMainBeat: true,
+    sounds: [
+      { type: 'kick', volume: 1.0 },
+      { type: 'hihat', volume: 0.6 }
+    ],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '&',
+    isMainBeat: false,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '2',
+    isMainBeat: true,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '&',
+    isMainBeat: false,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '3',
+    isMainBeat: true,
+    sounds: [
+      { type: 'snare', volume: 0.9 },
+      { type: 'hihat', volume: 0.6 }
+    ],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '&',
+    isMainBeat: false,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '4',
+    isMainBeat: true,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  },
+  {
+    beat: '&',
+    isMainBeat: false,
+    sounds: [{ type: 'hihat', volume: 0.6 }],
+    color: DEFAULT_COLOR
+  }
+];
+
+const SOUND_TYPES: SoundType[] = [
+  'kick',
+  'snare',
+  'hihat',
+  'tom',
+  'clap',
+  'click',
+  'drum',
+  'chime',
+  'wood',
+  'cowbell',
+  'bell',
+  'beep'
+];
+
+const SOUND_TYPE_SET = new Set<SoundType>(SOUND_TYPES);
+
+const clampBpm = (value: number): number => Math.max(MIN_BPM, Math.min(MAX_BPM, value));
+const clampMainBeats = (value: number): number =>
+  Math.max(MIN_MAIN_BEATS, Math.min(MAX_MAIN_BEATS, value));
+const clampVolume = (value: number): number => Math.max(0, Math.min(1, value));
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
+  JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
+
+const clonePresets = (items: Preset[]): Preset[] =>
+  items.map((preset) => ({
+    ...preset,
+    beatPatterns: clonePatterns(preset.beatPatterns)
+  }));
+
+const parseBeatSound = (value: unknown): BeatSound | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const { type, volume } = value;
+  if (typeof type !== 'string' || !SOUND_TYPE_SET.has(type as SoundType)) {
+    return null;
+  }
+  if (typeof volume !== 'number' || !Number.isFinite(volume)) {
+    return null;
+  }
+
+  return {
+    type: type as SoundType,
+    volume: clampVolume(volume)
+  };
+};
+
+const parseBeatPattern = (value: unknown): BeatPattern | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const { beat, isMainBeat, sounds, color } = value;
+  if (typeof beat !== 'string' || typeof isMainBeat !== 'boolean' || !Array.isArray(sounds)) {
+    return null;
+  }
+
+  const parsedSounds = sounds
+    .map(parseBeatSound)
+    .filter((sound): sound is BeatSound => sound !== null);
+  if (parsedSounds.length === 0) {
+    parsedSounds.push({ type: 'click', volume: DEFAULT_MASTER_VOLUME });
+  }
+
+  return {
+    beat,
+    isMainBeat,
+    sounds: parsedSounds,
+    color: typeof color === 'string' && color.trim() ? color : DEFAULT_COLOR
+  };
+};
+
+const parseBeatPatterns = (value: unknown): BeatPattern[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(parseBeatPattern)
+    .filter((pattern): pattern is BeatPattern => pattern !== null);
+};
+
+const parsePreset = (value: unknown): Preset | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const { id, name, beatPatterns, subdivisionsPerBeat, numMainBeats } = value;
+  if (typeof id !== 'string' || typeof name !== 'string' || !id.trim() || !name.trim()) {
+    return null;
+  }
+  if (typeof subdivisionsPerBeat !== 'number' || typeof numMainBeats !== 'number') {
+    return null;
+  }
+
+  const safeSubdivisions = clampSubdivisions(subdivisionsPerBeat);
+  const safeMainBeats = clampMainBeats(numMainBeats);
+  const parsedPatterns = parseBeatPatterns(beatPatterns);
+
+  return {
+    id,
+    name,
+    beatPatterns:
+      parsedPatterns.length > 0
+        ? parsedPatterns
+        : generateBeatPattern(safeMainBeats, safeSubdivisions),
+    subdivisionsPerBeat: safeSubdivisions,
+    numMainBeats: safeMainBeats
+  };
+};
+
+const parsePresets = (value: unknown): Preset[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(parsePreset).filter((preset): preset is Preset => preset !== null);
+};
+
+export const serializePersistedMetronomeState = (state: PersistedMetronomeState): string =>
+  JSON.stringify({
+    ...state,
+    version: PERSISTENCE_VERSION
+  });
+
+export const deserializePersistedMetronomeState = (
+  rawState: string | null
+): PersistedMetronomeState | null => {
+  if (!rawState) {
+    return null;
+  }
+
+  try {
+    const parsedValue = JSON.parse(rawState) as unknown;
+    if (!isRecord(parsedValue)) {
+      return null;
+    }
+
+    const { version } = parsedValue;
+    if (
+      version !== undefined &&
+      (typeof version !== 'number' || version !== PERSISTENCE_VERSION)
+    ) {
+      return null;
+    }
+
+    const safeSubdivisions =
+      typeof parsedValue.subdivisionsPerBeat === 'number'
+        ? clampSubdivisions(parsedValue.subdivisionsPerBeat)
+        : DEFAULT_SUBDIVISIONS;
+    const safeMainBeats =
+      typeof parsedValue.numMainBeats === 'number'
+        ? clampMainBeats(parsedValue.numMainBeats)
+        : DEFAULT_MAIN_BEATS;
+
+    const parsedPatterns = parseBeatPatterns(parsedValue.beatPatterns);
+    const presets = parsePresets(parsedValue.presets);
+    const selectedPresetId =
+      typeof parsedValue.selectedPresetId === 'string' &&
+      presets.some((preset) => preset.id === parsedValue.selectedPresetId)
+        ? parsedValue.selectedPresetId
+        : '';
+
+    return {
+      version: PERSISTENCE_VERSION,
+      bpm:
+        typeof parsedValue.bpm === 'number' ? clampBpm(parsedValue.bpm) : DEFAULT_BPM,
+      masterVolume:
+        typeof parsedValue.masterVolume === 'number'
+          ? clampVolume(parsedValue.masterVolume)
+          : DEFAULT_MASTER_VOLUME,
+      visualShape:
+        parsedValue.visualShape === 'square' ? 'square' : DEFAULT_VISUAL_SHAPE,
+      subdivisionsPerBeat: safeSubdivisions,
+      numMainBeats: safeMainBeats,
+      beatPatterns:
+        parsedPatterns.length > 0
+          ? parsedPatterns
+          : generateBeatPattern(safeMainBeats, safeSubdivisions),
+      presets,
+      selectedPresetId
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const clampSubdivisions = (value: number): number => Math.max(1, Math.min(4, value));
 
 export const generateBeatPattern = (mainBeats: number, subdivisions: number): BeatPattern[] => {
@@ -92,32 +366,27 @@ export const buildUniquePresetName = (
 const InteractiveMetronome = () => {
   const LOOKAHEAD_MS = 25;
   const SCHEDULE_AHEAD_TIME_SECONDS = 0.12;
+  const PERSIST_DEBOUNCE_MS = 150;
 
   const [isPlaying, setIsPlaying] = useState(false);
-  const [bpm, setBpm] = useState(117);
+  const [bpm, setBpm] = useState(DEFAULT_BPM);
   const [currentBeat, setCurrentBeat] = useState(0);
   const [visualPulse, setVisualPulse] = useState(false);
-  const [visualShape, setVisualShape] = useState<VisualShape>('circle');
-  const [masterVolume, setMasterVolume] = useState(0.7);
-  const [subdivisionsPerBeat, setSubdivisionsPerBeat] = useState(2);
-  const [numMainBeats, setNumMainBeats] = useState(4);
+  const [visualShape, setVisualShape] = useState<VisualShape>(DEFAULT_VISUAL_SHAPE);
+  const [masterVolume, setMasterVolume] = useState(DEFAULT_MASTER_VOLUME);
+  const [subdivisionsPerBeat, setSubdivisionsPerBeat] = useState(DEFAULT_SUBDIVISIONS);
+  const [numMainBeats, setNumMainBeats] = useState(DEFAULT_MAIN_BEATS);
   const [audioError, setAudioError] = useState<string | null>(null);
-  
-  const [beatPatterns, setBeatPatterns] = useState<BeatPattern[]>([
-    { beat: '1', isMainBeat: true, sounds: [{ type: 'kick', volume: 1.0 }, { type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '&', isMainBeat: false, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '2', isMainBeat: true, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '&', isMainBeat: false, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '3', isMainBeat: true, sounds: [{ type: 'snare', volume: 0.9 }, { type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '&', isMainBeat: false, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '4', isMainBeat: true, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' },
-    { beat: '&', isMainBeat: false, sounds: [{ type: 'hihat', volume: 0.6 }], color: 'bg-blue-500' }
-  ]);
-  
+
+  const [beatPatterns, setBeatPatterns] = useState<BeatPattern[]>(() =>
+    clonePatterns(DEFAULT_BEAT_PATTERNS)
+  );
+
   const [presets, setPresets] = useState<Preset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState('');
   const [newPresetName, setNewPresetName] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const schedulerIntervalRef = useRef<number | null>(null);
@@ -146,6 +415,77 @@ const InteractiveMetronome = () => {
   useEffect(() => {
     subdivisionsPerBeatRef.current = subdivisionsPerBeat;
   }, [subdivisionsPerBeat]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      setHasLoadedPersistedState(true);
+      return;
+    }
+
+    try {
+      const restoredState = deserializePersistedMetronomeState(
+        window.localStorage.getItem(STORAGE_KEY)
+      );
+
+      if (restoredState) {
+        setBpm(restoredState.bpm);
+        setMasterVolume(restoredState.masterVolume);
+        setVisualShape(restoredState.visualShape);
+        setSubdivisionsPerBeat(restoredState.subdivisionsPerBeat);
+        setNumMainBeats(restoredState.numMainBeats);
+        setBeatPatterns(clonePatterns(restoredState.beatPatterns));
+        setPresets(clonePresets(restoredState.presets));
+        setSelectedPresetId(restoredState.selectedPresetId);
+      }
+    } catch {
+      // Best effort restore only.
+    } finally {
+      setHasLoadedPersistedState(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState || typeof window === 'undefined') {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const persistedState: PersistedMetronomeState = {
+        version: PERSISTENCE_VERSION,
+        bpm,
+        masterVolume,
+        visualShape,
+        subdivisionsPerBeat,
+        numMainBeats,
+        beatPatterns: clonePatterns(beatPatterns),
+        presets: clonePresets(presets),
+        selectedPresetId
+      };
+
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          serializePersistedMetronomeState(persistedState)
+        );
+      } catch {
+        // localStorage may be blocked/full; keep app functional.
+      }
+    }, PERSIST_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    hasLoadedPersistedState,
+    bpm,
+    masterVolume,
+    visualShape,
+    subdivisionsPerBeat,
+    numMainBeats,
+    beatPatterns,
+    presets,
+    selectedPresetId
+  ]);
 
   const getNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
     if (noiseBufferRef.current) {
@@ -520,9 +860,6 @@ const InteractiveMetronome = () => {
     );
   };
 
-  const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
-    JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
-
   const createPresetId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -629,18 +966,18 @@ const InteractiveMetronome = () => {
               <input
                 type="number"
                 value={bpm}
-                onChange={(e) => setBpm(Math.max(0.1, Math.min(300, parseFloat(e.target.value) || 120)))}
+                onChange={(e) => setBpm(clampBpm(parseFloat(e.target.value) || 120))}
                 className="bg-slate-700 text-white px-4 py-2 rounded w-24 text-center text-xl font-bold mb-2"
-                min="0.1"
-                max="300"
+                min={MIN_BPM}
+                max={MAX_BPM}
                 step="0.1"
               />
               <input
                 type="range"
                 value={bpm}
-                onChange={(e) => setBpm(parseFloat(e.target.value))}
-                min="0.1"
-                max="300"
+                onChange={(e) => setBpm(clampBpm(parseFloat(e.target.value)))}
+                min={MIN_BPM}
+                max={MAX_BPM}
                 step="0.1"
                 className="w-full max-w-xs"
               />
@@ -722,10 +1059,10 @@ const InteractiveMetronome = () => {
             <input
               type="number"
               value={numMainBeats}
-              onChange={(e) => updateMainBeats(Math.max(1, Math.min(16, parseInt(e.target.value) || 4)))}
+              onChange={(e) => updateMainBeats(clampMainBeats(parseInt(e.target.value) || 4))}
               className="bg-slate-700 text-white px-3 py-2 rounded w-16 text-center"
-              min="1"
-              max="16"
+              min={MIN_MAIN_BEATS}
+              max={MAX_MAIN_BEATS}
             />
           </div>
         </div>
