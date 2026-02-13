@@ -55,12 +55,14 @@ const MIN_BPM = 0.1;
 const MAX_BPM = 300;
 const MIN_MAIN_BEATS = 1;
 const MAX_MAIN_BEATS = 16;
+const MAX_MASTER_VOLUME = 1;
 const DEFAULT_BPM = 117;
 const DEFAULT_MASTER_VOLUME = 0.7;
 const DEFAULT_VISUAL_SHAPE: VisualShape = 'circle';
 const DEFAULT_SUBDIVISIONS = 2;
 const DEFAULT_MAIN_BEATS = 4;
 const DEFAULT_COLOR = 'bg-blue-500';
+const MASTER_OUTPUT_BOOST = 2.5;
 
 const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
   {
@@ -140,6 +142,8 @@ const clampBpm = (value: number): number => Math.max(MIN_BPM, Math.min(MAX_BPM, 
 const clampMainBeats = (value: number): number =>
   Math.max(MIN_MAIN_BEATS, Math.min(MAX_MAIN_BEATS, value));
 const clampVolume = (value: number): number => Math.max(0, Math.min(1, value));
+const clampMasterVolume = (value: number): number =>
+  Math.max(0, Math.min(MAX_MASTER_VOLUME, value));
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -293,7 +297,7 @@ export const deserializePersistedMetronomeState = (
         typeof parsedValue.bpm === 'number' ? clampBpm(parsedValue.bpm) : DEFAULT_BPM,
       masterVolume:
         typeof parsedValue.masterVolume === 'number'
-          ? clampVolume(parsedValue.masterVolume)
+          ? clampMasterVolume(parsedValue.masterVolume)
           : DEFAULT_MASTER_VOLUME,
       visualShape:
         parsedValue.visualShape === 'square' ? 'square' : DEFAULT_VISUAL_SHAPE,
@@ -533,7 +537,7 @@ const InteractiveMetronome = () => {
       return;
     }
 
-    const finalVolume = masterVolumeRef.current * beatVolume;
+    const finalVolume = masterVolumeRef.current * beatVolume * MASTER_OUTPUT_BOOST;
     if (finalVolume <= 0.0001) {
       return;
     }
@@ -1006,9 +1010,9 @@ const InteractiveMetronome = () => {
               <input
                 type="range"
                 value={masterVolume}
-                onChange={(e) => setMasterVolume(parseFloat(e.target.value))}
+                onChange={(e) => setMasterVolume(clampMasterVolume(parseFloat(e.target.value)))}
                 min="0"
-                max="1"
+                max={MAX_MASTER_VOLUME}
                 step="0.01"
                 className="w-full max-w-xs"
               />
