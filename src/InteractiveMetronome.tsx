@@ -17,6 +17,7 @@ type SoundType =
 
 type VisualShape = 'circle' | 'square';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type EditorMode = 'detailed' | 'compact';
 
 interface BeatSound {
   type: SoundType;
@@ -76,6 +77,7 @@ const DEFAULT_COLOR = 'bg-blue-500';
 const MASTER_OUTPUT_BOOST = 2.5;
 const MAX_TAP_INTERVAL_MS = 2000;
 const MAX_TAP_SAMPLES = 8;
+const MAX_HISTORY_ENTRIES = 100;
 const DEFAULT_MAIN_BEAT_ACCENT = 1.15;
 const DEFAULT_SUB_BEAT_ACCENT = 1;
 
@@ -176,6 +178,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
   JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
+
+const clonePattern = (pattern: BeatPattern): BeatPattern => clonePatterns([pattern])[0];
 
 const clonePresets = (items: Preset[]): Preset[] =>
   items.map((preset) => ({
@@ -460,6 +464,10 @@ const InteractiveMetronome = () => {
   const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<EditorMode>('detailed');
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+  const [copiedBeatPattern, setCopiedBeatPattern] = useState<BeatPattern | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const schedulerIntervalRef = useRef<number | null>(null);
@@ -483,6 +491,8 @@ const InteractiveMetronome = () => {
   const countInTotalStepsRef = useRef(0);
   const tapTimestampsRef = useRef<number[]>([]);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const historyReadyRef = useRef(false);
+  const currentHistorySnapshotRef = useRef('');
 
   useEffect(() => {
     beatPatternsRef.current = beatPatterns;
@@ -600,6 +610,50 @@ const InteractiveMetronome = () => {
     return () => {
       window.clearTimeout(timeoutId);
     };
+  }, [
+    hasLoadedPersistedState,
+    bpm,
+    masterVolume,
+    visualShape,
+    subdivisionsPerBeat,
+    numMainBeats,
+    swingAmount,
+    countInBars,
+    resetToFirstBeatOnStart,
+    beatPatterns,
+    presets,
+    selectedPresetId
+  ]);
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState) {
+      return;
+    }
+
+    currentHistorySnapshotRef.current = serializePersistedMetronomeState(getPersistedStateSnapshot());
+    historyReadyRef.current = true;
+  }, [hasLoadedPersistedState]);
+
+  useEffect(() => {
+    if (!hasLoadedPersistedState || !historyReadyRef.current) {
+      return;
+    }
+
+    const nextSnapshot = serializePersistedMetronomeState(getPersistedStateSnapshot());
+    const currentSnapshot = currentHistorySnapshotRef.current;
+    if (!currentSnapshot) {
+      currentHistorySnapshotRef.current = nextSnapshot;
+      return;
+    }
+    if (nextSnapshot === currentSnapshot) {
+      return;
+    }
+
+    setUndoStack((previousStack) =>
+      [...previousStack, currentSnapshot].slice(-MAX_HISTORY_ENTRIES)
+    );
+    setRedoStack([]);
+    currentHistorySnapshotRef.current = nextSnapshot;
   }, [
     hasLoadedPersistedState,
     bpm,
@@ -1123,6 +1177,104 @@ const InteractiveMetronome = () => {
       });
   };
 
+  const undo = () => {
+    if (!undoStack.length) {
+      return;
+    }
+
+    const previousSnapshot = undoStack[undoStack.length - 1];
+    const previousState = deserializePersistedMetronomeState(previousSnapshot);
+    if (!previousState) {
+      return;
+    }
+
+    const currentSnapshot =
+      currentHistorySnapshotRef.current ||
+      serializePersistedMetronomeState(getPersistedStateSnapshot());
+    applyPersistedState(previousState);
+    currentHistorySnapshotRef.current = previousSnapshot;
+    setUndoStack((previousStack) => previousStack.slice(0, -1));
+    setRedoStack((previousStack) =>
+      [...previousStack, currentSnapshot].slice(-MAX_HISTORY_ENTRIES)
+    );
+  };
+
+  const redo = () => {
+    if (!redoStack.length) {
+      return;
+    }
+
+    const nextSnapshot = redoStack[redoStack.length - 1];
+    const nextState = deserializePersistedMetronomeState(nextSnapshot);
+    if (!nextState) {
+      return;
+    }
+
+    const currentSnapshot =
+      currentHistorySnapshotRef.current ||
+      serializePersistedMetronomeState(getPersistedStateSnapshot());
+    applyPersistedState(nextState);
+    currentHistorySnapshotRef.current = nextSnapshot;
+    setRedoStack((previousStack) => previousStack.slice(0, -1));
+    setUndoStack((previousStack) =>
+      [...previousStack, currentSnapshot].slice(-MAX_HISTORY_ENTRIES)
+    );
+  };
+
+  const copyBeatConfiguration = (beatIndex: number) => {
+    const sourcePattern = beatPatterns[beatIndex];
+    if (!sourcePattern) {
+      return;
+    }
+
+    setCopiedBeatPattern(clonePattern(sourcePattern));
+  };
+
+  const pasteBeatConfiguration = (beatIndex: number) => {
+    if (!copiedBeatPattern) {
+      return;
+    }
+
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, index) =>
+        index === beatIndex
+          ? {
+              ...pattern,
+              sounds: clonePattern(copiedBeatPattern).sounds,
+              color: copiedBeatPattern.color,
+              accent: copiedBeatPattern.accent
+            }
+          : pattern
+      )
+    );
+  };
+
+  const duplicateBeatToNext = (beatIndex: number) => {
+    setBeatPatterns((previousPatterns) => {
+      if (!previousPatterns.length) {
+        return previousPatterns;
+      }
+
+      const nextBeatIndex = (beatIndex + 1) % previousPatterns.length;
+      const sourcePattern = previousPatterns[beatIndex];
+      if (!sourcePattern) {
+        return previousPatterns;
+      }
+
+      const sourceClone = clonePattern(sourcePattern);
+      return previousPatterns.map((pattern, index) =>
+        index === nextBeatIndex
+          ? {
+              ...pattern,
+              sounds: sourceClone.sounds,
+              color: sourceClone.color,
+              accent: sourceClone.accent
+            }
+          : pattern
+      );
+    });
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -1131,6 +1283,24 @@ const InteractiveMetronome = () => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTextEntryTarget(event.target)) {
         return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+        const normalizedKey = event.key.toLowerCase();
+        if (normalizedKey === 'z') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            redo();
+          } else {
+            undo();
+          }
+          return;
+        }
+        if (normalizedKey === 'y') {
+          event.preventDefault();
+          redo();
+          return;
+        }
       }
 
       if (event.key === ' ' || event.code === 'Space') {
@@ -1161,7 +1331,7 @@ const InteractiveMetronome = () => {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [isPlaying]);
+  }, [isPlaying, undoStack, redoStack]);
 
   const addSoundToBeat = (beatIndex: number) => {
     setBeatPatterns((previousPatterns) =>
@@ -1342,7 +1512,7 @@ const InteractiveMetronome = () => {
                   : 'Idle'}
           </div>
           <span className="text-xs text-slate-400">
-            Shortcuts: Space play/pause, T tap tempo, Up/Down BPM (Shift = +/-5)
+            Shortcuts: Space play/pause, T tap tempo, Up/Down BPM (Shift = +/-5), Cmd/Ctrl+Z undo
           </span>
         </div>
         {persistenceError && (
@@ -1530,7 +1700,48 @@ const InteractiveMetronome = () => {
 
         <div className="bg-slate-800 rounded-lg p-6 shadow-xl">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-            <h2 className="text-xl font-semibold">Beat Configuration</h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-xl font-semibold">Beat Configuration</h2>
+              <div className="flex items-center rounded bg-slate-700 p-1">
+                <button
+                  onClick={() => setEditorMode('detailed')}
+                  className={`rounded px-3 py-1 text-xs transition-colors ${
+                    editorMode === 'detailed'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-300 hover:bg-slate-600'
+                  }`}
+                >
+                  Detailed
+                </button>
+                <button
+                  onClick={() => setEditorMode('compact')}
+                  className={`rounded px-3 py-1 text-xs transition-colors ${
+                    editorMode === 'compact'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-300 hover:bg-slate-600'
+                  }`}
+                >
+                  Compact
+                </button>
+              </div>
+              <button
+                onClick={undo}
+                disabled={!undoStack.length}
+                className="rounded bg-slate-700 px-3 py-1 text-xs transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Undo
+              </button>
+              <button
+                onClick={redo}
+                disabled={!redoStack.length}
+                className="rounded bg-slate-700 px-3 py-1 text-xs transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Redo
+              </button>
+              {copiedBeatPattern && (
+                <span className="text-xs text-emerald-300">Beat config copied</span>
+              )}
+            </div>
             <div className="flex gap-3 items-center flex-wrap">
               <div className="flex gap-2 items-center">
                 <label className="text-sm text-gray-400">Preset:</label>
@@ -1616,100 +1827,245 @@ const InteractiveMetronome = () => {
             </div>
           )}
 
-          <div className="space-y-4">
-            {beatPatterns.map((pattern, beatIndex) => (
-              <div key={beatIndex} className={`bg-slate-700 rounded p-4 ${pattern.isMainBeat ? 'border-l-4 border-blue-500' : ''}`}>
-                <div className="flex items-center gap-4 mb-3 flex-wrap">
-                  <div className={`font-bold ${pattern.isMainBeat ? 'text-xl w-20' : 'text-lg w-16'}`}>
-                    {pattern.isMainBeat ? `Beat ${pattern.beat}` : `${pattern.beat}`}
-                  </div>
-                  
-                  <div className="flex-1 min-w-[150px]">
-                    <label className="text-sm text-gray-400 block mb-1">Color</label>
-                    <select
-                      value={pattern.color}
-                      onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
-                      className="bg-slate-600 text-white px-3 py-2 rounded w-full"
-                    >
-                      {colorOptions.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
+          {editorMode === 'detailed' ? (
+            <div className="space-y-4">
+              {beatPatterns.map((pattern, beatIndex) => (
+                <div
+                  key={beatIndex}
+                  className={`bg-slate-700 rounded p-4 ${pattern.isMainBeat ? 'border-l-4 border-blue-500' : ''}`}
+                >
+                  <div className="flex items-center gap-4 mb-3 flex-wrap">
+                    <div className={`font-bold ${pattern.isMainBeat ? 'text-xl w-20' : 'text-lg w-16'}`}>
+                      {pattern.isMainBeat ? `Beat ${pattern.beat}` : `${pattern.beat}`}
+                    </div>
+
+                    <div className="flex-1 min-w-[150px]">
+                      <label className="text-sm text-gray-400 block mb-1">Color</label>
+                      <select
+                        value={pattern.color}
+                        onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
+                        className="bg-slate-600 text-white px-3 py-2 rounded w-full"
+                      >
+                        {colorOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="min-w-[180px]">
+                      <label className="text-sm text-gray-400 block mb-1">
+                        Accent {Math.round(pattern.accent * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        value={pattern.accent}
+                        onChange={(e) => updateBeatAccent(beatIndex, parseFloat(e.target.value))}
+                        min={MIN_ACCENT}
+                        max={MAX_ACCENT}
+                        step="0.01"
+                        className="w-full"
+                      />
+                    </div>
+
+                    <div className="mt-5 flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => copyBeatConfiguration(beatIndex)}
+                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                      >
+                        Copy
+                      </button>
+                      <button
+                        onClick={() => pasteBeatConfiguration(beatIndex)}
+                        disabled={!copiedBeatPattern}
+                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors enabled:hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Paste
+                      </button>
+                      <button
+                        onClick={() => duplicateBeatToNext(beatIndex)}
+                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                      >
+                        Duplicate to Next
+                      </button>
+                      <button
+                        onClick={() => addSoundToBeat(beatIndex)}
+                        className="bg-green-600 hover:bg-green-700 rounded px-3 py-2 flex items-center gap-2 transition-colors"
+                      >
+                        <Plus size={16} /> Add Sound
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="min-w-[180px]">
-                    <label className="text-sm text-gray-400 block mb-1">
-                      Accent {Math.round(pattern.accent * 100)}%
-                    </label>
-                    <input
-                      type="range"
-                      value={pattern.accent}
-                      onChange={(e) => updateBeatAccent(beatIndex, parseFloat(e.target.value))}
-                      min={MIN_ACCENT}
-                      max={MAX_ACCENT}
-                      step="0.01"
-                      className="w-full"
-                    />
-                  </div>
+                  <div className="space-y-2 ml-4 border-l-2 border-slate-600 pl-4">
+                    {pattern.sounds.map((sound, soundIndex) => (
+                      <div key={soundIndex} className="bg-slate-600 rounded p-3">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <div className="flex-1 min-w-[150px]">
+                            <label className="text-xs text-gray-400 block mb-1">Sound {soundIndex + 1}</label>
+                            <select
+                              value={sound.type}
+                              onChange={(e) =>
+                                updateBeatSoundType(beatIndex, soundIndex, e.target.value as SoundType)
+                              }
+                              className="bg-slate-700 text-white px-3 py-2 rounded w-full"
+                            >
+                              {soundOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                  <button
-                    onClick={() => addSoundToBeat(beatIndex)}
-                    className="bg-green-600 hover:bg-green-700 rounded px-3 py-2 flex items-center gap-2 transition-colors mt-5"
-                  >
-                    <Plus size={16} /> Add Sound
-                  </button>
-                </div>
-
-                <div className="space-y-2 ml-4 border-l-2 border-slate-600 pl-4">
-                  {pattern.sounds.map((sound, soundIndex) => (
-                    <div key={soundIndex} className="bg-slate-600 rounded p-3">
-                      <div className="flex items-center gap-3 mb-2 flex-wrap">
-                        <div className="flex-1 min-w-[150px]">
-                          <label className="text-xs text-gray-400 block mb-1">Sound {soundIndex + 1}</label>
-                          <select
-                            value={sound.type}
-                            onChange={(e) =>
-                              updateBeatSoundType(beatIndex, soundIndex, e.target.value as SoundType)
-                            }
-                            className="bg-slate-700 text-white px-3 py-2 rounded w-full"
-                          >
-                            {soundOptions.map(opt => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
+                          {pattern.sounds.length > 1 && (
+                            <button
+                              onClick={() => removeSoundFromBeat(beatIndex, soundIndex)}
+                              aria-label={`Remove sound ${soundIndex + 1} from beat ${pattern.beat}`}
+                              className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors mt-4"
+                              title="Remove sound"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
                         </div>
 
-                        {pattern.sounds.length > 1 && (
-                          <button
-                            onClick={() => removeSoundFromBeat(beatIndex, soundIndex)}
-                            aria-label={`Remove sound ${soundIndex + 1} from beat ${pattern.beat}`}
-                            className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors mt-4"
-                            title="Remove sound"
-                          >
-                            <X size={16} />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-3">
+                          <Volume2 size={14} className="text-gray-400" />
+                          <label className="text-xs text-gray-400 w-20">
+                            Vol: {Math.round(sound.volume * 100)}%
+                          </label>
+                          <input
+                            type="range"
+                            value={sound.volume}
+                            onChange={(e) =>
+                              updateBeatSoundVolume(beatIndex, soundIndex, parseFloat(e.target.value))
+                            }
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            className="flex-1"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {beatPatterns.map((pattern, beatIndex) => {
+                const primarySound = pattern.sounds[0] ?? { type: 'click' as SoundType, volume: 0.7 };
+
+                return (
+                  <div key={beatIndex} className="rounded bg-slate-700 p-3">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
+                      <div className="lg:col-span-1">
+                        <div className={`font-bold ${pattern.isMainBeat ? 'text-lg' : 'text-base'}`}>
+                          {pattern.beat}
+                        </div>
+                        <div className="text-xs text-gray-400">{pattern.sounds.length} sounds</div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        <Volume2 size={14} className="text-gray-400" />
-                        <label className="text-xs text-gray-400 w-20">Vol: {Math.round(sound.volume * 100)}%</label>
+                      <div className="lg:col-span-2">
+                        <label className="mb-1 block text-xs text-gray-400">Color</label>
+                        <select
+                          value={pattern.color}
+                          onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
+                          className="w-full rounded bg-slate-600 px-2 py-2 text-sm text-white"
+                        >
+                          {colorOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="lg:col-span-3">
+                        <label className="mb-1 block text-xs text-gray-400">
+                          Primary Sound ({Math.round(primarySound.volume * 100)}%)
+                        </label>
+                        <select
+                          value={primarySound.type}
+                          onChange={(e) => updateBeatSoundType(beatIndex, 0, e.target.value as SoundType)}
+                          className="mb-2 w-full rounded bg-slate-600 px-2 py-2 text-sm text-white"
+                        >
+                          {soundOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
                         <input
                           type="range"
-                          value={sound.volume}
-                          onChange={(e) => updateBeatSoundVolume(beatIndex, soundIndex, parseFloat(e.target.value))}
+                          value={primarySound.volume}
+                          onChange={(e) => updateBeatSoundVolume(beatIndex, 0, parseFloat(e.target.value))}
                           min="0"
                           max="1"
                           step="0.01"
-                          className="flex-1"
+                          className="w-full"
                         />
                       </div>
+
+                      <div className="lg:col-span-3">
+                        <label className="mb-1 block text-xs text-gray-400">
+                          Accent {Math.round(pattern.accent * 100)}%
+                        </label>
+                        <input
+                          type="range"
+                          value={pattern.accent}
+                          onChange={(e) => updateBeatAccent(beatIndex, parseFloat(e.target.value))}
+                          min={MIN_ACCENT}
+                          max={MAX_ACCENT}
+                          step="0.01"
+                          className="w-full"
+                        />
+                      </div>
+
+                      <div className="lg:col-span-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => copyBeatConfiguration(beatIndex)}
+                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => pasteBeatConfiguration(beatIndex)}
+                            disabled={!copiedBeatPattern}
+                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors enabled:hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Paste
+                          </button>
+                          <button
+                            onClick={() => duplicateBeatToNext(beatIndex)}
+                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                          >
+                            Dup
+                          </button>
+                          <button
+                            onClick={() => addSoundToBeat(beatIndex)}
+                            className="rounded bg-green-600 px-3 py-2 text-xs transition-colors hover:bg-green-500"
+                          >
+                            + Sound
+                          </button>
+                          <button
+                            onClick={() => setEditorMode('detailed')}
+                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                          >
+                            Full Edit
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="mt-6 text-center text-sm text-gray-400">
