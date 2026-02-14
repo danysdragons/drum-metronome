@@ -16,6 +16,7 @@ type SoundType =
   | 'beep';
 
 type VisualShape = 'circle' | 'square';
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface BeatSound {
   type: SoundType;
@@ -63,6 +64,8 @@ const DEFAULT_SUBDIVISIONS = 2;
 const DEFAULT_MAIN_BEATS = 4;
 const DEFAULT_COLOR = 'bg-blue-500';
 const MASTER_OUTPUT_BOOST = 2.5;
+const MAX_TAP_INTERVAL_MS = 2000;
+const MAX_TAP_SAMPLES = 8;
 
 const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
   {
@@ -367,6 +370,20 @@ export const buildUniquePresetName = (
   return candidateName;
 };
 
+const isTextEntryTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT'
+  );
+};
+
 const InteractiveMetronome = () => {
   const LOOKAHEAD_MS = 25;
   const SCHEDULE_AHEAD_TIME_SECONDS = 0.12;
@@ -391,6 +408,8 @@ const InteractiveMetronome = () => {
   const [newPresetName, setNewPresetName] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const schedulerIntervalRef = useRef<number | null>(null);
@@ -403,6 +422,8 @@ const InteractiveMetronome = () => {
   const bpmRef = useRef(bpm);
   const masterVolumeRef = useRef(masterVolume);
   const subdivisionsPerBeatRef = useRef(subdivisionsPerBeat);
+  const tapTimestampsRef = useRef<number[]>([]);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     beatPatternsRef.current = beatPatterns;
@@ -420,9 +441,33 @@ const InteractiveMetronome = () => {
     subdivisionsPerBeatRef.current = subdivisionsPerBeat;
   }, [subdivisionsPerBeat]);
 
+  const applyPersistedState = (restoredState: PersistedMetronomeState) => {
+    setBpm(restoredState.bpm);
+    setMasterVolume(restoredState.masterVolume);
+    setVisualShape(restoredState.visualShape);
+    setSubdivisionsPerBeat(restoredState.subdivisionsPerBeat);
+    setNumMainBeats(restoredState.numMainBeats);
+    setBeatPatterns(clonePatterns(restoredState.beatPatterns));
+    setPresets(clonePresets(restoredState.presets));
+    setSelectedPresetId(restoredState.selectedPresetId);
+  };
+
+  const getPersistedStateSnapshot = (): PersistedMetronomeState => ({
+    version: PERSISTENCE_VERSION,
+    bpm,
+    masterVolume,
+    visualShape,
+    subdivisionsPerBeat,
+    numMainBeats,
+    beatPatterns: clonePatterns(beatPatterns),
+    presets: clonePresets(presets),
+    selectedPresetId
+  });
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       setHasLoadedPersistedState(true);
+      setSaveStatus('saved');
       return;
     }
 
@@ -432,17 +477,12 @@ const InteractiveMetronome = () => {
       );
 
       if (restoredState) {
-        setBpm(restoredState.bpm);
-        setMasterVolume(restoredState.masterVolume);
-        setVisualShape(restoredState.visualShape);
-        setSubdivisionsPerBeat(restoredState.subdivisionsPerBeat);
-        setNumMainBeats(restoredState.numMainBeats);
-        setBeatPatterns(clonePatterns(restoredState.beatPatterns));
-        setPresets(clonePresets(restoredState.presets));
-        setSelectedPresetId(restoredState.selectedPresetId);
+        applyPersistedState(restoredState);
       }
+      setSaveStatus('saved');
     } catch {
-      // Best effort restore only.
+      setPersistenceError('Unable to load saved settings. Using defaults.');
+      setSaveStatus('error');
     } finally {
       setHasLoadedPersistedState(true);
     }
@@ -453,26 +493,22 @@ const InteractiveMetronome = () => {
       return;
     }
 
+    setSaveStatus('saving');
     const timeoutId = window.setTimeout(() => {
-      const persistedState: PersistedMetronomeState = {
-        version: PERSISTENCE_VERSION,
-        bpm,
-        masterVolume,
-        visualShape,
-        subdivisionsPerBeat,
-        numMainBeats,
-        beatPatterns: clonePatterns(beatPatterns),
-        presets: clonePresets(presets),
-        selectedPresetId
-      };
+      const persistedState = getPersistedStateSnapshot();
 
       try {
         window.localStorage.setItem(
           STORAGE_KEY,
           serializePersistedMetronomeState(persistedState)
         );
+        setSaveStatus('saved');
+        setPersistenceError(null);
       } catch {
-        // localStorage may be blocked/full; keep app functional.
+        setSaveStatus('error');
+        setPersistenceError(
+          'Unable to save settings locally. Check browser storage permissions or available space.'
+        );
       }
     }, PERSIST_DEBOUNCE_MS);
 
@@ -490,6 +526,20 @@ const InteractiveMetronome = () => {
     presets,
     selectedPresetId
   ]);
+
+  useEffect(() => {
+    if (saveStatus !== 'saved' || typeof window === 'undefined') {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setSaveStatus('idle');
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [saveStatus]);
 
   const getNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
     if (noiseBufferRef.current) {
@@ -801,6 +851,123 @@ const InteractiveMetronome = () => {
       });
   };
 
+  const updateBpmByStep = (step: number) => {
+    setBpm((previousBpm) => clampBpm(previousBpm + step));
+  };
+
+  const tapTempo = () => {
+    const now = performance.now();
+    const recentTaps = tapTimestampsRef.current
+      .filter((timestamp) => now - timestamp <= MAX_TAP_INTERVAL_MS)
+      .concat(now)
+      .slice(-MAX_TAP_SAMPLES);
+
+    tapTimestampsRef.current = recentTaps;
+    if (recentTaps.length < 2) {
+      return;
+    }
+
+    const intervals = recentTaps
+      .slice(1)
+      .map((timestamp, index) => timestamp - recentTaps[index]);
+    const averageIntervalMs =
+      intervals.reduce((total, interval) => total + interval, 0) / intervals.length;
+
+    if (averageIntervalMs > 0) {
+      setBpm(clampBpm(60000 / averageIntervalMs));
+    }
+  };
+
+  const exportSettings = () => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const serializedState = serializePersistedMetronomeState(getPersistedStateSnapshot());
+    const blob = new Blob([serializedState], { type: 'application/json' });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement('a');
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    downloadAnchor.href = objectUrl;
+    downloadAnchor.download = `drum-metronome-config-${dateStamp}.json`;
+    downloadAnchor.click();
+    window.URL.revokeObjectURL(objectUrl);
+  };
+
+  const openImportFilePicker = () => {
+    importFileInputRef.current?.click();
+  };
+
+  const importSettingsFromFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = '';
+    if (!selectedFile) {
+      return;
+    }
+
+    void selectedFile
+      .text()
+      .then((rawText) => {
+        const restoredState = deserializePersistedMetronomeState(rawText);
+        if (!restoredState) {
+          setSaveStatus('error');
+          setPersistenceError(
+            'Import failed: invalid file format or unsupported configuration version.'
+          );
+          return;
+        }
+
+        applyPersistedState(restoredState);
+        setSaveStatus('saved');
+        setPersistenceError(null);
+      })
+      .catch(() => {
+        setSaveStatus('error');
+        setPersistenceError('Import failed: unable to read the selected file.');
+      });
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextEntryTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === ' ' || event.code === 'Space') {
+        event.preventDefault();
+        togglePlay();
+        return;
+      }
+
+      if (event.key.toLowerCase() === 't' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        tapTempo();
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        updateBpmByStep(event.shiftKey ? 5 : 1);
+        return;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        updateBpmByStep(event.shiftKey ? -5 : -1);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isPlaying]);
+
   const addSoundToBeat = (beatIndex: number) => {
     setBeatPatterns((previousPatterns) =>
       previousPatterns.map((pattern, index) =>
@@ -951,6 +1118,38 @@ const InteractiveMetronome = () => {
             {audioError}
           </div>
         )}
+        <div className="mb-4 flex items-center justify-center gap-3">
+          <div
+            className={`rounded border px-3 py-1 text-xs ${
+              saveStatus === 'error'
+                ? 'border-red-400/50 bg-red-500/10 text-red-200'
+                : saveStatus === 'saving'
+                  ? 'border-amber-400/50 bg-amber-500/10 text-amber-200'
+                  : saveStatus === 'saved'
+                    ? 'border-emerald-400/50 bg-emerald-500/10 text-emerald-200'
+                    : 'border-slate-600 bg-slate-700/60 text-slate-300'
+            }`}
+          >
+            {saveStatus === 'saving'
+              ? 'Saving...'
+              : saveStatus === 'saved'
+                ? 'Saved'
+                : saveStatus === 'error'
+                  ? 'Save failed'
+                  : 'Idle'}
+          </div>
+          <span className="text-xs text-slate-400">
+            Shortcuts: Space play/pause, T tap tempo, Up/Down BPM (Shift = +/-5)
+          </span>
+        </div>
+        {persistenceError && (
+          <div
+            role="alert"
+            className="mb-4 rounded border border-red-400/50 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+          >
+            {persistenceError}
+          </div>
+        )}
         
         <div className="bg-slate-800 rounded-lg p-6 shadow-xl mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
@@ -985,6 +1184,12 @@ const InteractiveMetronome = () => {
                 step="0.1"
                 className="w-full max-w-xs"
               />
+              <button
+                onClick={tapTempo}
+                className="mt-2 rounded bg-slate-600 px-3 py-1 text-sm hover:bg-slate-500"
+              >
+                Tap Tempo (T)
+              </button>
             </div>
 
             <div className="flex flex-col items-center">
@@ -1106,6 +1311,25 @@ const InteractiveMetronome = () => {
               >
                 <Save size={20} /> Save Preset
               </button>
+              <button
+                onClick={exportSettings}
+                className="bg-slate-600 hover:bg-slate-500 rounded px-4 py-2 transition-colors"
+              >
+                Export JSON
+              </button>
+              <button
+                onClick={openImportFilePicker}
+                className="bg-slate-600 hover:bg-slate-500 rounded px-4 py-2 transition-colors"
+              >
+                Import JSON
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={importSettingsFromFile}
+                className="hidden"
+              />
             </div>
           </div>
 
