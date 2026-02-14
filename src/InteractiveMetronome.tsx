@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Plus, Trash2, Volume2, Save, X } from 'lucide-react';
+import { Play, Pause, Plus, Trash2, Volume2, Save, X, ChevronDown, ChevronUp } from 'lucide-react';
 
 type SoundType =
   | 'kick'
@@ -18,6 +18,7 @@ type SoundType =
 type VisualShape = 'circle' | 'square';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type EditorMode = 'detailed' | 'compact';
+type ThemePreset = 'studio' | 'sunset' | 'mint';
 
 interface BeatSound {
   type: SoundType;
@@ -45,6 +46,7 @@ export interface PersistedMetronomeState {
   bpm: number;
   masterVolume: number;
   visualShape: VisualShape;
+  themePreset: ThemePreset;
   subdivisionsPerBeat: number;
   numMainBeats: number;
   swingAmount: number;
@@ -70,6 +72,7 @@ const DEFAULT_MASTER_VOLUME = 0.7;
 const DEFAULT_VISUAL_SHAPE: VisualShape = 'circle';
 const DEFAULT_SUBDIVISIONS = 2;
 const DEFAULT_MAIN_BEATS = 4;
+const DEFAULT_THEME_PRESET: ThemePreset = 'studio';
 const DEFAULT_SWING_AMOUNT = 0;
 const DEFAULT_COUNT_IN_BARS = 0;
 const DEFAULT_RESET_TO_FIRST_BEAT_ON_START = true;
@@ -80,6 +83,68 @@ const MAX_TAP_SAMPLES = 8;
 const MAX_HISTORY_ENTRIES = 100;
 const DEFAULT_MAIN_BEAT_ACCENT = 1.15;
 const DEFAULT_SUB_BEAT_ACCENT = 1;
+const THEME_PRESETS: { value: ThemePreset; label: string }[] = [
+  { value: 'studio', label: 'Studio' },
+  { value: 'sunset', label: 'Sunset' },
+  { value: 'mint', label: 'Mint' }
+];
+
+const THEME_STYLE_MAP: Record<
+  ThemePreset,
+  {
+    pageBackground: string;
+    card: string;
+    cardMuted: string;
+    primaryButton: string;
+    secondaryButton: string;
+    accentRing: string;
+    pulseOn: string;
+    pulseOff: string;
+    textMuted: string;
+    stickyBar: string;
+    beatIdleRing: string;
+  }
+> = {
+  studio: {
+    pageBackground: 'bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800',
+    card: 'bg-slate-800/90 border border-slate-700/70',
+    cardMuted: 'bg-slate-700/65',
+    primaryButton: 'bg-blue-600 hover:bg-blue-700',
+    secondaryButton: 'bg-slate-600 hover:bg-slate-500',
+    accentRing: 'ring-blue-300/80',
+    pulseOn: 'bg-blue-400 shadow-blue-500/50',
+    pulseOff: 'bg-blue-900',
+    textMuted: 'text-slate-400',
+    stickyBar: 'bg-slate-900/90 border-slate-700/80',
+    beatIdleRing: 'ring-white'
+  },
+  sunset: {
+    pageBackground: 'bg-gradient-to-br from-rose-950 via-orange-900 to-amber-900',
+    card: 'bg-zinc-900/85 border border-orange-500/35',
+    cardMuted: 'bg-zinc-800/75',
+    primaryButton: 'bg-orange-600 hover:bg-orange-500',
+    secondaryButton: 'bg-zinc-700 hover:bg-zinc-600',
+    accentRing: 'ring-orange-200/80',
+    pulseOn: 'bg-orange-300 shadow-orange-500/50',
+    pulseOff: 'bg-orange-950',
+    textMuted: 'text-orange-100/80',
+    stickyBar: 'bg-zinc-950/90 border-orange-500/40',
+    beatIdleRing: 'ring-orange-100'
+  },
+  mint: {
+    pageBackground: 'bg-gradient-to-br from-emerald-950 via-teal-900 to-cyan-900',
+    card: 'bg-zinc-900/85 border border-emerald-500/35',
+    cardMuted: 'bg-zinc-800/75',
+    primaryButton: 'bg-emerald-600 hover:bg-emerald-500',
+    secondaryButton: 'bg-zinc-700 hover:bg-zinc-600',
+    accentRing: 'ring-emerald-200/80',
+    pulseOn: 'bg-emerald-300 shadow-emerald-500/55',
+    pulseOff: 'bg-emerald-950',
+    textMuted: 'text-emerald-100/80',
+    stickyBar: 'bg-zinc-950/90 border-emerald-500/40',
+    beatIdleRing: 'ring-emerald-100'
+  }
+};
 
 const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
   {
@@ -180,6 +245,8 @@ const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
   JSON.parse(JSON.stringify(patterns)) as BeatPattern[];
 
 const clonePattern = (pattern: BeatPattern): BeatPattern => clonePatterns([pattern])[0];
+const isThemePreset = (value: unknown): value is ThemePreset =>
+  value === 'studio' || value === 'sunset' || value === 'mint';
 
 const clonePresets = (items: Preset[]): Preset[] =>
   items.map((preset) => ({
@@ -338,6 +405,9 @@ export const deserializePersistedMetronomeState = (
           : DEFAULT_MASTER_VOLUME,
       visualShape:
         parsedValue.visualShape === 'square' ? 'square' : DEFAULT_VISUAL_SHAPE,
+      themePreset: isThemePreset(parsedValue.themePreset)
+        ? parsedValue.themePreset
+        : DEFAULT_THEME_PRESET,
       subdivisionsPerBeat: safeSubdivisions,
       numMainBeats: safeMainBeats,
       swingAmount:
@@ -441,6 +511,7 @@ const InteractiveMetronome = () => {
   const [currentBeat, setCurrentBeat] = useState(0);
   const [visualPulse, setVisualPulse] = useState(false);
   const [visualShape, setVisualShape] = useState<VisualShape>(DEFAULT_VISUAL_SHAPE);
+  const [themePreset, setThemePreset] = useState<ThemePreset>(DEFAULT_THEME_PRESET);
   const [masterVolume, setMasterVolume] = useState(DEFAULT_MASTER_VOLUME);
   const [subdivisionsPerBeat, setSubdivisionsPerBeat] = useState(DEFAULT_SUBDIVISIONS);
   const [numMainBeats, setNumMainBeats] = useState(DEFAULT_MAIN_BEATS);
@@ -468,6 +539,8 @@ const InteractiveMetronome = () => {
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const [copiedBeatPattern, setCopiedBeatPattern] = useState<BeatPattern | null>(null);
+  const [isTransportPanelOpen, setIsTransportPanelOpen] = useState(true);
+  const [isEditorPanelOpen, setIsEditorPanelOpen] = useState(true);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const schedulerIntervalRef = useRef<number | null>(null);
@@ -534,6 +607,7 @@ const InteractiveMetronome = () => {
     setBpm(restoredState.bpm);
     setMasterVolume(restoredState.masterVolume);
     setVisualShape(restoredState.visualShape);
+    setThemePreset(restoredState.themePreset);
     setSubdivisionsPerBeat(restoredState.subdivisionsPerBeat);
     setNumMainBeats(restoredState.numMainBeats);
     setSwingAmount(restoredState.swingAmount);
@@ -549,6 +623,7 @@ const InteractiveMetronome = () => {
     bpm,
     masterVolume,
     visualShape,
+    themePreset,
     subdivisionsPerBeat,
     numMainBeats,
     swingAmount,
@@ -615,6 +690,7 @@ const InteractiveMetronome = () => {
     bpm,
     masterVolume,
     visualShape,
+    themePreset,
     subdivisionsPerBeat,
     numMainBeats,
     swingAmount,
@@ -659,6 +735,7 @@ const InteractiveMetronome = () => {
     bpm,
     masterVolume,
     visualShape,
+    themePreset,
     subdivisionsPerBeat,
     numMainBeats,
     swingAmount,
@@ -1478,10 +1555,11 @@ const InteractiveMetronome = () => {
     { value: 'bg-orange-500', label: 'Orange' },
     { value: 'bg-pink-500', label: 'Pink' }
   ];
+  const theme = THEME_STYLE_MAP[themePreset];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white p-8">
-      <div className="max-w-6xl mx-auto">
+    <div className={`min-h-screen ${theme.pageBackground} text-white p-4 pb-28 transition-colors duration-500 md:p-8 md:pb-8`}>
+      <div className="max-w-6xl mx-auto motion-fade-up">
         <h1 className="text-4xl font-bold text-center mb-8">Interactive Metronome</h1>
         {audioError && (
           <div
@@ -1511,9 +1589,25 @@ const InteractiveMetronome = () => {
                   ? 'Save failed'
                   : 'Idle'}
           </div>
-          <span className="text-xs text-slate-400">
+          <span className={`text-xs ${theme.textMuted}`}>
             Shortcuts: Space play/pause, T tap tempo, Up/Down BPM (Shift = +/-5), Cmd/Ctrl+Z undo
           </span>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center justify-center gap-2 motion-fade-up motion-stagger-1">
+          <span className={`text-xs font-medium ${theme.textMuted}`}>Theme</span>
+          {THEME_PRESETS.map((presetOption) => (
+            <button
+              key={presetOption.value}
+              onClick={() => setThemePreset(presetOption.value)}
+              className={`rounded-full px-3 py-1 text-xs transition-all duration-200 ${
+                themePreset === presetOption.value
+                  ? `${theme.primaryButton} text-white shadow-lg`
+                  : `${theme.secondaryButton} text-white/85`
+              }`}
+            >
+              {presetOption.label}
+            </button>
+          ))}
         </div>
         {persistenceError && (
           <div
@@ -1524,13 +1618,30 @@ const InteractiveMetronome = () => {
           </div>
         )}
         
-        <div className="bg-slate-800 rounded-lg p-6 shadow-xl mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div className={`mb-6 overflow-hidden rounded-2xl shadow-xl transition-colors duration-500 ${theme.card} motion-fade-up motion-stagger-1`}>
+          <button
+            onClick={() => setIsTransportPanelOpen((previous) => !previous)}
+            className="flex w-full items-center justify-between px-4 py-4 text-left md:px-6"
+            aria-expanded={isTransportPanelOpen}
+            aria-controls="transport-panel-body"
+          >
+            <div>
+              <h2 className="text-lg font-semibold">Transport & Practice</h2>
+              <p className={`text-xs ${theme.textMuted}`}>
+                {Math.round(bpm)} BPM • {numMainBeats} beats • {subdivisionsPerBeat} subdivisions
+              </p>
+            </div>
+            {isTransportPanelOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+
+          {isTransportPanelOpen && (
+            <div id="transport-panel-body" className="px-4 pb-4 md:px-6 md:pb-6 motion-fade-up">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
             <div className="flex flex-col items-center justify-center">
               <button
                 onClick={togglePlay}
                 aria-label={isPlaying ? 'Pause metronome' : 'Start metronome'}
-                className="bg-blue-600 hover:bg-blue-700 rounded-full p-6 transition-colors mb-2"
+                className={`${theme.primaryButton} rounded-full p-6 transition-all duration-200 mb-2 hover:scale-105 active:scale-95`}
               >
                 {isPlaying ? <Pause size={32} /> : <Play size={32} />}
               </button>
@@ -1548,7 +1659,7 @@ const InteractiveMetronome = () => {
                 type="number"
                 value={bpm}
                 onChange={(e) => setBpm(clampBpm(parseFloat(e.target.value) || 120))}
-                className="bg-slate-700 text-white px-4 py-2 rounded w-24 text-center text-xl font-bold mb-2"
+                className={`text-white px-4 py-2 rounded w-24 text-center text-xl font-bold mb-2 ${theme.cardMuted}`}
                 min={MIN_BPM}
                 max={MAX_BPM}
                 step="0.1"
@@ -1564,7 +1675,7 @@ const InteractiveMetronome = () => {
               />
               <button
                 onClick={tapTempo}
-                className="mt-2 rounded bg-slate-600 px-3 py-1 text-sm hover:bg-slate-500"
+                className={`mt-2 rounded px-3 py-1 text-sm transition-colors ${theme.secondaryButton}`}
               >
                 Tap Tempo (T)
               </button>
@@ -1575,7 +1686,7 @@ const InteractiveMetronome = () => {
               <select
                 value={subdivisionsPerBeat}
                 onChange={(e) => updateSubdivisions(parseInt(e.target.value))}
-                className="bg-slate-700 text-white px-4 py-2 rounded text-center text-xl font-bold mb-2 w-32"
+                className={`text-white px-4 py-2 rounded text-center text-xl font-bold mb-2 w-32 ${theme.cardMuted}`}
               >
                 <option value="1">None (1)</option>
                 <option value="2">Eighths (2)</option>
@@ -1603,12 +1714,12 @@ const InteractiveMetronome = () => {
           </div>
 
           <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="rounded bg-slate-700/60 p-3">
+            <div className={`rounded p-3 ${theme.cardMuted}`}>
               <label className="mb-2 block text-sm text-gray-300">Count-in</label>
               <select
                 value={countInBars}
                 onChange={(e) => setCountInBars(clampCountInBars(parseInt(e.target.value) || 0))}
-                className="w-full rounded bg-slate-600 px-3 py-2 text-white"
+                className={`w-full rounded px-3 py-2 text-white ${theme.secondaryButton}`}
               >
                 <option value="0">Off</option>
                 <option value="1">1 bar</option>
@@ -1616,7 +1727,7 @@ const InteractiveMetronome = () => {
               </select>
             </div>
 
-            <div className="rounded bg-slate-700/60 p-3">
+            <div className={`rounded p-3 ${theme.cardMuted}`}>
               <label className="mb-2 block text-sm text-gray-300">
                 Swing ({Math.round(swingAmount * 100)}%)
               </label>
@@ -1632,7 +1743,7 @@ const InteractiveMetronome = () => {
               <div className="mt-1 text-xs text-gray-400">Delays off-beats for a shuffled feel</div>
             </div>
 
-            <div className="rounded bg-slate-700/60 p-3">
+            <div className={`rounded p-3 ${theme.cardMuted}`}>
               <label className="mb-2 block text-sm text-gray-300">Start Position</label>
               <label className="flex items-center gap-2 text-sm text-gray-200">
                 <input
@@ -1652,7 +1763,7 @@ const InteractiveMetronome = () => {
                 key={index}
                 className={`${pattern.isMainBeat ? 'w-16 h-16' : 'w-12 h-12'} ${visualShape === 'circle' ? 'rounded-full' : 'rounded-lg'} flex items-center justify-center font-bold ${pattern.isMainBeat ? 'text-xl' : 'text-sm'} transition-all ${
                   pattern.color
-                } ${currentBeat === index && isPlaying ? 'scale-125 ring-4 ring-white' : 'scale-100'}`}
+                } ${currentBeat === index && isPlaying ? `scale-125 ring-4 ${theme.beatIdleRing}` : 'scale-100'}`}
               >
                 {pattern.beat}
               </div>
@@ -1661,7 +1772,11 @@ const InteractiveMetronome = () => {
 
           <div className="flex justify-center mb-4">
             <div className={`w-32 h-32 ${visualShape === 'circle' ? 'rounded-full' : 'rounded-lg'} transition-all duration-100 shadow-2xl ${
-              isPlaying && visualPulse ? 'bg-blue-400 scale-110 shadow-blue-500/50' : isPlaying ? 'bg-blue-500 scale-100' : 'bg-blue-900 scale-75 opacity-50'
+              isPlaying && visualPulse
+                ? `${theme.pulseOn} scale-110`
+                : isPlaying
+                  ? `${theme.primaryButton.split(' ')[0]} scale-100`
+                  : `${theme.pulseOff} scale-75 opacity-50`
             }`}></div>
           </div>
 
@@ -1670,7 +1785,7 @@ const InteractiveMetronome = () => {
             <button
               onClick={() => setVisualShape('circle')}
               className={`px-4 py-2 rounded transition-colors ${
-                visualShape === 'circle' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+                visualShape === 'circle' ? theme.primaryButton : theme.secondaryButton
               }`}
             >
               Circles
@@ -1678,7 +1793,7 @@ const InteractiveMetronome = () => {
             <button
               onClick={() => setVisualShape('square')}
               className={`px-4 py-2 rounded transition-colors ${
-                visualShape === 'square' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+                visualShape === 'square' ? theme.primaryButton : theme.secondaryButton
               }`}
             >
               Squares
@@ -1691,24 +1806,42 @@ const InteractiveMetronome = () => {
               type="number"
               value={numMainBeats}
               onChange={(e) => updateMainBeats(clampMainBeats(parseInt(e.target.value) || 4))}
-              className="bg-slate-700 text-white px-3 py-2 rounded w-16 text-center"
+              className={`text-white px-3 py-2 rounded w-16 text-center ${theme.cardMuted}`}
               min={MIN_MAIN_BEATS}
               max={MAX_MAIN_BEATS}
             />
           </div>
+            </div>
+          )}
         </div>
 
-        <div className="bg-slate-800 rounded-lg p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
+        <div className={`overflow-hidden rounded-2xl shadow-xl transition-colors duration-500 ${theme.card} motion-fade-up motion-stagger-2`}>
+          <button
+            onClick={() => setIsEditorPanelOpen((previous) => !previous)}
+            className="flex w-full items-center justify-between px-4 py-4 text-left md:px-6"
+            aria-expanded={isEditorPanelOpen}
+            aria-controls="editor-panel-body"
+          >
+            <div>
+              <h2 className="text-lg font-semibold">Beat Configuration</h2>
+              <p className={`text-xs ${theme.textMuted}`}>
+                {beatPatterns.length} steps • {presets.length} presets • {editorMode} editor
+              </p>
+            </div>
+            {isEditorPanelOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+
+          {isEditorPanelOpen && (
+            <div id="editor-panel-body" className="px-4 pb-4 md:px-6 md:pb-6 motion-fade-up">
+              <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <div className="flex items-center gap-3 flex-wrap">
-              <h2 className="text-xl font-semibold">Beat Configuration</h2>
-              <div className="flex items-center rounded bg-slate-700 p-1">
+              <div className={`flex items-center rounded p-1 ${theme.cardMuted}`}>
                 <button
                   onClick={() => setEditorMode('detailed')}
                   className={`rounded px-3 py-1 text-xs transition-colors ${
                     editorMode === 'detailed'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-300 hover:bg-slate-600'
+                      ? `${theme.primaryButton} text-white`
+                      : `text-gray-300 ${theme.secondaryButton}`
                   }`}
                 >
                   Detailed
@@ -1717,8 +1850,8 @@ const InteractiveMetronome = () => {
                   onClick={() => setEditorMode('compact')}
                   className={`rounded px-3 py-1 text-xs transition-colors ${
                     editorMode === 'compact'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-gray-300 hover:bg-slate-600'
+                      ? `${theme.primaryButton} text-white`
+                      : `text-gray-300 ${theme.secondaryButton}`
                   }`}
                 >
                   Compact
@@ -1727,14 +1860,14 @@ const InteractiveMetronome = () => {
               <button
                 onClick={undo}
                 disabled={!undoStack.length}
-                className="rounded bg-slate-700 px-3 py-1 text-xs transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className={`rounded px-3 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${theme.secondaryButton}`}
               >
                 Undo
               </button>
               <button
                 onClick={redo}
                 disabled={!redoStack.length}
-                className="rounded bg-slate-700 px-3 py-1 text-xs transition-colors enabled:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className={`rounded px-3 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${theme.secondaryButton}`}
               >
                 Redo
               </button>
@@ -1748,7 +1881,7 @@ const InteractiveMetronome = () => {
                 <select
                   value={selectedPresetId}
                   onChange={(e) => loadPreset(e.target.value)}
-                  className="bg-slate-700 text-white px-3 py-2 rounded"
+                  className={`text-white px-3 py-2 rounded ${theme.cardMuted}`}
                 >
                   <option value="">No preset selected</option>
                   {presets.map((preset) => (
@@ -1770,19 +1903,19 @@ const InteractiveMetronome = () => {
               </div>
               <button
                 onClick={() => setShowSaveDialog(true)}
-                className="bg-purple-600 hover:bg-purple-700 rounded px-4 py-2 flex items-center gap-2 transition-colors"
+                className={`${theme.primaryButton} rounded px-4 py-2 flex items-center gap-2 transition-colors`}
               >
                 <Save size={20} /> Save Preset
               </button>
               <button
                 onClick={exportSettings}
-                className="bg-slate-600 hover:bg-slate-500 rounded px-4 py-2 transition-colors"
+                className={`${theme.secondaryButton} rounded px-4 py-2 transition-colors`}
               >
                 Export JSON
               </button>
               <button
                 onClick={openImportFilePicker}
-                className="bg-slate-600 hover:bg-slate-500 rounded px-4 py-2 transition-colors"
+                className={`${theme.secondaryButton} rounded px-4 py-2 transition-colors`}
               >
                 Import JSON
               </button>
@@ -1797,7 +1930,7 @@ const InteractiveMetronome = () => {
           </div>
 
           {showSaveDialog && (
-            <div className="mb-4 bg-slate-700 rounded p-4 flex items-center gap-3 flex-wrap">
+            <div className={`mb-4 rounded p-4 flex items-center gap-3 flex-wrap ${theme.cardMuted}`}>
               <label className="text-sm text-gray-400">Preset Name:</label>
               <input
                 type="text"
@@ -1805,7 +1938,7 @@ const InteractiveMetronome = () => {
                 onChange={(e) => setNewPresetName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && savePreset()}
                 placeholder="Enter preset name..."
-                className="bg-slate-600 text-white px-3 py-2 rounded flex-1 min-w-[200px]"
+                className={`text-white px-3 py-2 rounded flex-1 min-w-[200px] ${theme.secondaryButton}`}
                 autoFocus
               />
               <button
@@ -1832,7 +1965,7 @@ const InteractiveMetronome = () => {
               {beatPatterns.map((pattern, beatIndex) => (
                 <div
                   key={beatIndex}
-                  className={`bg-slate-700 rounded p-4 ${pattern.isMainBeat ? 'border-l-4 border-blue-500' : ''}`}
+                  className={`${theme.cardMuted} rounded p-4 transition-transform duration-200 hover:-translate-y-0.5 ${pattern.isMainBeat ? 'border-l-4 border-blue-500' : ''}`}
                 >
                   <div className="flex items-center gap-4 mb-3 flex-wrap">
                     <div className={`font-bold ${pattern.isMainBeat ? 'text-xl w-20' : 'text-lg w-16'}`}>
@@ -1844,7 +1977,7 @@ const InteractiveMetronome = () => {
                       <select
                         value={pattern.color}
                         onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
-                        className="bg-slate-600 text-white px-3 py-2 rounded w-full"
+                        className={`text-white px-3 py-2 rounded w-full ${theme.secondaryButton}`}
                       >
                         {colorOptions.map((opt) => (
                           <option key={opt.value} value={opt.value}>
@@ -1872,20 +2005,20 @@ const InteractiveMetronome = () => {
                     <div className="mt-5 flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => copyBeatConfiguration(beatIndex)}
-                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                        className={`rounded px-3 py-2 text-xs transition-colors ${theme.secondaryButton}`}
                       >
                         Copy
                       </button>
                       <button
                         onClick={() => pasteBeatConfiguration(beatIndex)}
                         disabled={!copiedBeatPattern}
-                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors enabled:hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        className={`rounded px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${theme.secondaryButton}`}
                       >
                         Paste
                       </button>
                       <button
                         onClick={() => duplicateBeatToNext(beatIndex)}
-                        className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                        className={`rounded px-3 py-2 text-xs transition-colors ${theme.secondaryButton}`}
                       >
                         Duplicate to Next
                       </button>
@@ -1900,7 +2033,7 @@ const InteractiveMetronome = () => {
 
                   <div className="space-y-2 ml-4 border-l-2 border-slate-600 pl-4">
                     {pattern.sounds.map((sound, soundIndex) => (
-                      <div key={soundIndex} className="bg-slate-600 rounded p-3">
+                      <div key={soundIndex} className={`${theme.secondaryButton} rounded p-3`}>
                         <div className="flex items-center gap-3 mb-2 flex-wrap">
                           <div className="flex-1 min-w-[150px]">
                             <label className="text-xs text-gray-400 block mb-1">Sound {soundIndex + 1}</label>
@@ -1909,7 +2042,7 @@ const InteractiveMetronome = () => {
                               onChange={(e) =>
                                 updateBeatSoundType(beatIndex, soundIndex, e.target.value as SoundType)
                               }
-                              className="bg-slate-700 text-white px-3 py-2 rounded w-full"
+                              className={`text-white px-3 py-2 rounded w-full ${theme.cardMuted}`}
                             >
                               {soundOptions.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -1960,7 +2093,7 @@ const InteractiveMetronome = () => {
                 const primarySound = pattern.sounds[0] ?? { type: 'click' as SoundType, volume: 0.7 };
 
                 return (
-                  <div key={beatIndex} className="rounded bg-slate-700 p-3">
+                  <div key={beatIndex} className={`rounded p-3 transition-transform duration-200 hover:-translate-y-0.5 ${theme.cardMuted}`}>
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
                       <div className="lg:col-span-1">
                         <div className={`font-bold ${pattern.isMainBeat ? 'text-lg' : 'text-base'}`}>
@@ -1974,7 +2107,7 @@ const InteractiveMetronome = () => {
                         <select
                           value={pattern.color}
                           onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
-                          className="w-full rounded bg-slate-600 px-2 py-2 text-sm text-white"
+                          className={`w-full rounded px-2 py-2 text-sm text-white ${theme.secondaryButton}`}
                         >
                           {colorOptions.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -1991,7 +2124,7 @@ const InteractiveMetronome = () => {
                         <select
                           value={primarySound.type}
                           onChange={(e) => updateBeatSoundType(beatIndex, 0, e.target.value as SoundType)}
-                          className="mb-2 w-full rounded bg-slate-600 px-2 py-2 text-sm text-white"
+                          className={`mb-2 w-full rounded px-2 py-2 text-sm text-white ${theme.secondaryButton}`}
                         >
                           {soundOptions.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -2029,20 +2162,20 @@ const InteractiveMetronome = () => {
                         <div className="flex flex-wrap gap-2">
                           <button
                             onClick={() => copyBeatConfiguration(beatIndex)}
-                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                            className={`rounded px-3 py-2 text-xs transition-colors ${theme.secondaryButton}`}
                           >
                             Copy
                           </button>
                           <button
                             onClick={() => pasteBeatConfiguration(beatIndex)}
                             disabled={!copiedBeatPattern}
-                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors enabled:hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
+                            className={`rounded px-3 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${theme.secondaryButton}`}
                           >
                             Paste
                           </button>
                           <button
                             onClick={() => duplicateBeatToNext(beatIndex)}
-                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                            className={`rounded px-3 py-2 text-xs transition-colors ${theme.secondaryButton}`}
                           >
                             Dup
                           </button>
@@ -2054,7 +2187,7 @@ const InteractiveMetronome = () => {
                           </button>
                           <button
                             onClick={() => setEditorMode('detailed')}
-                            className="rounded bg-slate-600 px-3 py-2 text-xs transition-colors hover:bg-slate-500"
+                            className={`rounded px-3 py-2 text-xs transition-colors ${theme.secondaryButton}`}
                           >
                             Full Edit
                           </button>
@@ -2066,10 +2199,37 @@ const InteractiveMetronome = () => {
               })}
             </div>
           )}
+            </div>
+          )}
         </div>
 
         <div className="mt-6 text-center text-sm text-gray-400">
           Main beats shown larger. Subdivisions: 2 = eighth notes (&), 3 = triplets (& a), 4 = sixteenth notes (e & a)
+        </div>
+      </div>
+
+      <div className={`fixed inset-x-0 bottom-0 z-40 border-t p-3 backdrop-blur md:hidden ${theme.stickyBar}`}>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+          <button
+            onClick={togglePlay}
+            aria-label={isPlaying ? 'Pause metronome from sticky controls' : 'Start from sticky controls'}
+            className={`${theme.primaryButton} flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-transform active:scale-95`}
+          >
+            {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+            {isPlaying ? 'Pause' : 'Play'}
+          </button>
+
+          <div className="text-center">
+            <div className={`text-[11px] uppercase tracking-wide ${theme.textMuted}`}>Tempo</div>
+            <div className="text-lg font-semibold leading-none">{Math.round(bpm)} BPM</div>
+          </div>
+
+          <button
+            onClick={tapTempo}
+            className={`${theme.secondaryButton} rounded-full px-4 py-2 text-sm font-medium`}
+          >
+            Tap
+          </button>
         </div>
       </div>
     </div>
