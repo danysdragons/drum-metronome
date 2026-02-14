@@ -74,8 +74,13 @@ describe('metronome helpers', () => {
     expect(parsed?.visualShape).toBe('circle');
     expect(parsed?.subdivisionsPerBeat).toBe(4);
     expect(parsed?.numMainBeats).toBe(1);
+    expect(parsed?.swingAmount).toBe(0);
+    expect(parsed?.countInBars).toBe(0);
+    expect(parsed?.resetToFirstBeatOnStart).toBe(true);
     expect(parsed?.beatPatterns[0]?.sounds[0]?.volume).toBe(1);
+    expect(parsed?.beatPatterns[0]?.accent).toBe(1.15);
     expect(parsed?.presets[0]?.beatPatterns[0]?.sounds[0]?.volume).toBe(0);
+    expect(parsed?.presets[0]?.beatPatterns[0]?.accent).toBe(1.15);
     expect(parsed?.selectedPresetId).toBe('');
   });
 

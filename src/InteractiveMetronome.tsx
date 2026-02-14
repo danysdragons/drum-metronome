@@ -28,6 +28,7 @@ interface BeatPattern {
   isMainBeat: boolean;
   sounds: BeatSound[];
   color: string;
+  accent: number;
 }
 
 interface Preset {
@@ -45,6 +46,9 @@ export interface PersistedMetronomeState {
   visualShape: VisualShape;
   subdivisionsPerBeat: number;
   numMainBeats: number;
+  swingAmount: number;
+  countInBars: number;
+  resetToFirstBeatOnStart: boolean;
   beatPatterns: BeatPattern[];
   presets: Preset[];
   selectedPresetId: string;
@@ -57,15 +61,23 @@ const MAX_BPM = 300;
 const MIN_MAIN_BEATS = 1;
 const MAX_MAIN_BEATS = 16;
 const MAX_MASTER_VOLUME = 1;
+const MAX_COUNT_IN_BARS = 2;
+const MIN_ACCENT = 0.25;
+const MAX_ACCENT = 2;
 const DEFAULT_BPM = 117;
 const DEFAULT_MASTER_VOLUME = 0.7;
 const DEFAULT_VISUAL_SHAPE: VisualShape = 'circle';
 const DEFAULT_SUBDIVISIONS = 2;
 const DEFAULT_MAIN_BEATS = 4;
+const DEFAULT_SWING_AMOUNT = 0;
+const DEFAULT_COUNT_IN_BARS = 0;
+const DEFAULT_RESET_TO_FIRST_BEAT_ON_START = true;
 const DEFAULT_COLOR = 'bg-blue-500';
 const MASTER_OUTPUT_BOOST = 2.5;
 const MAX_TAP_INTERVAL_MS = 2000;
 const MAX_TAP_SAMPLES = 8;
+const DEFAULT_MAIN_BEAT_ACCENT = 1.15;
+const DEFAULT_SUB_BEAT_ACCENT = 1;
 
 const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
   {
@@ -75,25 +87,29 @@ const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
       { type: 'kick', volume: 1.0 },
       { type: 'hihat', volume: 0.6 }
     ],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_MAIN_BEAT_ACCENT
   },
   {
     beat: '&',
     isMainBeat: false,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_SUB_BEAT_ACCENT
   },
   {
     beat: '2',
     isMainBeat: true,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_MAIN_BEAT_ACCENT
   },
   {
     beat: '&',
     isMainBeat: false,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_SUB_BEAT_ACCENT
   },
   {
     beat: '3',
@@ -102,25 +118,29 @@ const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
       { type: 'snare', volume: 0.9 },
       { type: 'hihat', volume: 0.6 }
     ],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_MAIN_BEAT_ACCENT
   },
   {
     beat: '&',
     isMainBeat: false,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_SUB_BEAT_ACCENT
   },
   {
     beat: '4',
     isMainBeat: true,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_MAIN_BEAT_ACCENT
   },
   {
     beat: '&',
     isMainBeat: false,
     sounds: [{ type: 'hihat', volume: 0.6 }],
-    color: DEFAULT_COLOR
+    color: DEFAULT_COLOR,
+    accent: DEFAULT_SUB_BEAT_ACCENT
   }
 ];
 
@@ -145,6 +165,10 @@ const clampBpm = (value: number): number => Math.max(MIN_BPM, Math.min(MAX_BPM, 
 const clampMainBeats = (value: number): number =>
   Math.max(MIN_MAIN_BEATS, Math.min(MAX_MAIN_BEATS, value));
 const clampVolume = (value: number): number => Math.max(0, Math.min(1, value));
+const clampAccent = (value: number): number => Math.max(MIN_ACCENT, Math.min(MAX_ACCENT, value));
+const clampSwingAmount = (value: number): number => Math.max(0, Math.min(0.45, value));
+const clampCountInBars = (value: number): number =>
+  Math.max(0, Math.min(MAX_COUNT_IN_BARS, value));
 const clampMasterVolume = (value: number): number =>
   Math.max(0, Math.min(MAX_MASTER_VOLUME, value));
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -183,7 +207,7 @@ const parseBeatPattern = (value: unknown): BeatPattern | null => {
     return null;
   }
 
-  const { beat, isMainBeat, sounds, color } = value;
+  const { beat, isMainBeat, sounds, color, accent } = value;
   if (typeof beat !== 'string' || typeof isMainBeat !== 'boolean' || !Array.isArray(sounds)) {
     return null;
   }
@@ -199,7 +223,13 @@ const parseBeatPattern = (value: unknown): BeatPattern | null => {
     beat,
     isMainBeat,
     sounds: parsedSounds,
-    color: typeof color === 'string' && color.trim() ? color : DEFAULT_COLOR
+    color: typeof color === 'string' && color.trim() ? color : DEFAULT_COLOR,
+    accent:
+      typeof accent === 'number' && Number.isFinite(accent)
+        ? clampAccent(accent)
+        : isMainBeat
+          ? DEFAULT_MAIN_BEAT_ACCENT
+          : DEFAULT_SUB_BEAT_ACCENT
   };
 };
 
@@ -306,6 +336,18 @@ export const deserializePersistedMetronomeState = (
         parsedValue.visualShape === 'square' ? 'square' : DEFAULT_VISUAL_SHAPE,
       subdivisionsPerBeat: safeSubdivisions,
       numMainBeats: safeMainBeats,
+      swingAmount:
+        typeof parsedValue.swingAmount === 'number'
+          ? clampSwingAmount(parsedValue.swingAmount)
+          : DEFAULT_SWING_AMOUNT,
+      countInBars:
+        typeof parsedValue.countInBars === 'number'
+          ? clampCountInBars(Math.round(parsedValue.countInBars))
+          : DEFAULT_COUNT_IN_BARS,
+      resetToFirstBeatOnStart:
+        typeof parsedValue.resetToFirstBeatOnStart === 'boolean'
+          ? parsedValue.resetToFirstBeatOnStart
+          : DEFAULT_RESET_TO_FIRST_BEAT_ON_START,
       beatPatterns:
         parsedPatterns.length > 0
           ? parsedPatterns
@@ -339,7 +381,8 @@ export const generateBeatPattern = (mainBeats: number, subdivisions: number): Be
         beat: label,
         isMainBeat: isMain,
         sounds: [{ type: 'click', volume: 0.7 }],
-        color: 'bg-blue-500'
+        color: 'bg-blue-500',
+        accent: isMain ? DEFAULT_MAIN_BEAT_ACCENT : DEFAULT_SUB_BEAT_ACCENT
       });
     }
   }
@@ -397,6 +440,13 @@ const InteractiveMetronome = () => {
   const [masterVolume, setMasterVolume] = useState(DEFAULT_MASTER_VOLUME);
   const [subdivisionsPerBeat, setSubdivisionsPerBeat] = useState(DEFAULT_SUBDIVISIONS);
   const [numMainBeats, setNumMainBeats] = useState(DEFAULT_MAIN_BEATS);
+  const [swingAmount, setSwingAmount] = useState(DEFAULT_SWING_AMOUNT);
+  const [countInBars, setCountInBars] = useState(DEFAULT_COUNT_IN_BARS);
+  const [resetToFirstBeatOnStart, setResetToFirstBeatOnStart] = useState(
+    DEFAULT_RESET_TO_FIRST_BEAT_ON_START
+  );
+  const [isCountingIn, setIsCountingIn] = useState(false);
+  const [countInBeatsRemaining, setCountInBeatsRemaining] = useState(0);
   const [audioError, setAudioError] = useState<string | null>(null);
 
   const [beatPatterns, setBeatPatterns] = useState<BeatPattern[]>(() =>
@@ -420,8 +470,17 @@ const InteractiveMetronome = () => {
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
   const beatPatternsRef = useRef(beatPatterns);
   const bpmRef = useRef(bpm);
+  const currentBeatRef = useRef(currentBeat);
   const masterVolumeRef = useRef(masterVolume);
   const subdivisionsPerBeatRef = useRef(subdivisionsPerBeat);
+  const numMainBeatsRef = useRef(numMainBeats);
+  const swingAmountRef = useRef(swingAmount);
+  const countInBarsRef = useRef(countInBars);
+  const resetToFirstBeatOnStartRef = useRef(resetToFirstBeatOnStart);
+  const countInStartBeatIndexRef = useRef(0);
+  const isCountingInRef = useRef(false);
+  const countInStepsRemainingRef = useRef(0);
+  const countInTotalStepsRef = useRef(0);
   const tapTimestampsRef = useRef<number[]>([]);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -434,6 +493,10 @@ const InteractiveMetronome = () => {
   }, [bpm]);
 
   useEffect(() => {
+    currentBeatRef.current = currentBeat;
+  }, [currentBeat]);
+
+  useEffect(() => {
     masterVolumeRef.current = masterVolume;
   }, [masterVolume]);
 
@@ -441,12 +504,31 @@ const InteractiveMetronome = () => {
     subdivisionsPerBeatRef.current = subdivisionsPerBeat;
   }, [subdivisionsPerBeat]);
 
+  useEffect(() => {
+    numMainBeatsRef.current = numMainBeats;
+  }, [numMainBeats]);
+
+  useEffect(() => {
+    swingAmountRef.current = swingAmount;
+  }, [swingAmount]);
+
+  useEffect(() => {
+    countInBarsRef.current = countInBars;
+  }, [countInBars]);
+
+  useEffect(() => {
+    resetToFirstBeatOnStartRef.current = resetToFirstBeatOnStart;
+  }, [resetToFirstBeatOnStart]);
+
   const applyPersistedState = (restoredState: PersistedMetronomeState) => {
     setBpm(restoredState.bpm);
     setMasterVolume(restoredState.masterVolume);
     setVisualShape(restoredState.visualShape);
     setSubdivisionsPerBeat(restoredState.subdivisionsPerBeat);
     setNumMainBeats(restoredState.numMainBeats);
+    setSwingAmount(restoredState.swingAmount);
+    setCountInBars(restoredState.countInBars);
+    setResetToFirstBeatOnStart(restoredState.resetToFirstBeatOnStart);
     setBeatPatterns(clonePatterns(restoredState.beatPatterns));
     setPresets(clonePresets(restoredState.presets));
     setSelectedPresetId(restoredState.selectedPresetId);
@@ -459,6 +541,9 @@ const InteractiveMetronome = () => {
     visualShape,
     subdivisionsPerBeat,
     numMainBeats,
+    swingAmount,
+    countInBars,
+    resetToFirstBeatOnStart,
     beatPatterns: clonePatterns(beatPatterns),
     presets: clonePresets(presets),
     selectedPresetId
@@ -522,6 +607,9 @@ const InteractiveMetronome = () => {
     visualShape,
     subdivisionsPerBeat,
     numMainBeats,
+    swingAmount,
+    countInBars,
+    resetToFirstBeatOnStart,
     beatPatterns,
     presets,
     selectedPresetId
@@ -735,7 +823,39 @@ const InteractiveMetronome = () => {
     scheduledVisualTimersRef.current.add(timerId);
   };
 
-  const stopTransport = () => {
+  const getSubdivisionDurationSeconds = (
+    bpmValue: number,
+    subdivisions: number,
+    subdivisionIndex: number,
+    applySwing: boolean
+  ): number => {
+    const safeBpm = Math.max(MIN_BPM, bpmValue);
+    const safeSubdivisions = Math.max(1, subdivisions);
+    const baseDurationSeconds = 60 / safeBpm / safeSubdivisions;
+
+    if (!applySwing || safeSubdivisions < 2) {
+      return baseDurationSeconds;
+    }
+
+    const clampedSwing = clampSwingAmount(swingAmountRef.current);
+    if (clampedSwing <= 0) {
+      return baseDurationSeconds;
+    }
+
+    const isEvenStep = subdivisionIndex % 2 === 0;
+    if (isEvenStep) {
+      const hasPairedStep = subdivisionIndex + 1 < safeSubdivisions;
+      return hasPairedStep
+        ? baseDurationSeconds * (1 + clampedSwing)
+        : baseDurationSeconds;
+    }
+
+    return baseDurationSeconds * (1 - clampedSwing);
+  };
+
+  const stopTransport = (options: { resetPosition?: boolean } = {}) => {
+    const shouldResetPosition = options.resetPosition ?? true;
+
     if (schedulerIntervalRef.current) {
       window.clearInterval(schedulerIntervalRef.current);
       schedulerIntervalRef.current = null;
@@ -748,9 +868,19 @@ const InteractiveMetronome = () => {
       pulseTimeoutRef.current = null;
     }
 
-    beatIndexRef.current = 0;
+    isCountingInRef.current = false;
+    countInStepsRemainingRef.current = 0;
+    countInTotalStepsRef.current = 0;
+    setIsCountingIn(false);
+    setCountInBeatsRemaining(0);
+
+    const clampedCurrentBeat = Math.max(
+      0,
+      Math.min(currentBeatRef.current, beatPatternsRef.current.length - 1)
+    );
+    beatIndexRef.current = shouldResetPosition ? 0 : clampedCurrentBeat;
     nextNoteTimeRef.current = 0;
-    setCurrentBeat(0);
+    setCurrentBeat(shouldResetPosition ? 0 : clampedCurrentBeat);
     setVisualPulse(false);
   };
 
@@ -765,17 +895,60 @@ const InteractiveMetronome = () => {
       return;
     }
 
+    const safeSubdivisions = Math.max(1, subdivisionsPerBeatRef.current);
+    const safeBpm = Math.max(MIN_BPM, bpmRef.current);
+
     while (nextNoteTimeRef.current < ctx.currentTime + SCHEDULE_AHEAD_TIME_SECONDS) {
+      if (isCountingInRef.current && countInStepsRemainingRef.current > 0) {
+        const elapsedCountInSteps =
+          countInTotalStepsRef.current - countInStepsRemainingRef.current;
+        const subdivisionIndex = elapsedCountInSteps % safeSubdivisions;
+        const isMainSubdivision = subdivisionIndex === 0;
+        const visualIndex =
+          (countInStartBeatIndexRef.current + elapsedCountInSteps) % activePatterns.length;
+
+        playSound('click', isMainSubdivision ? 1 : 0.6, nextNoteTimeRef.current);
+        scheduleVisualPulse(visualIndex, nextNoteTimeRef.current, ctx.currentTime);
+
+        if (isMainSubdivision) {
+          setCountInBeatsRemaining((previousCount) => Math.max(0, previousCount - 1));
+        }
+
+        countInStepsRemainingRef.current -= 1;
+        nextNoteTimeRef.current += getSubdivisionDurationSeconds(
+          safeBpm,
+          safeSubdivisions,
+          subdivisionIndex,
+          false
+        );
+
+        if (countInStepsRemainingRef.current <= 0) {
+          isCountingInRef.current = false;
+          setIsCountingIn(false);
+          setCountInBeatsRemaining(0);
+          if (resetToFirstBeatOnStartRef.current) {
+            beatIndexRef.current = 0;
+          }
+        }
+
+        continue;
+      }
+
       const beatIndex = beatIndexRef.current % activePatterns.length;
       const beat = activePatterns[beatIndex];
+      const accent = clampAccent(beat.accent);
       beat.sounds.forEach((sound) => {
-        playSound(sound.type, sound.volume, nextNoteTimeRef.current);
+        playSound(sound.type, sound.volume * accent, nextNoteTimeRef.current);
       });
       scheduleVisualPulse(beatIndex, nextNoteTimeRef.current, ctx.currentTime);
 
-      const safeBpm = Math.max(0.1, bpmRef.current);
-      const safeSubdivisions = Math.max(1, subdivisionsPerBeatRef.current);
-      const secondsPerSubdivision = 60 / safeBpm / safeSubdivisions;
+      const subdivisionIndex = beatIndex % safeSubdivisions;
+      const secondsPerSubdivision = getSubdivisionDurationSeconds(
+        safeBpm,
+        safeSubdivisions,
+        subdivisionIndex,
+        true
+      );
 
       nextNoteTimeRef.current += secondsPerSubdivision;
       beatIndexRef.current = (beatIndexRef.current + 1) % activePatterns.length;
@@ -788,8 +961,30 @@ const InteractiveMetronome = () => {
       return;
     }
 
-    stopTransport();
-    beatIndexRef.current = 0;
+    const activePatterns = beatPatternsRef.current;
+    if (!activePatterns.length) {
+      return;
+    }
+
+    stopTransport({ resetPosition: false });
+
+    const clampedCurrentBeat = Math.max(
+      0,
+      Math.min(currentBeatRef.current, activePatterns.length - 1)
+    );
+    const startBeatIndex = resetToFirstBeatOnStartRef.current ? 0 : clampedCurrentBeat;
+    beatIndexRef.current = startBeatIndex;
+    countInStartBeatIndexRef.current = startBeatIndex;
+
+    const configuredCountInBars = clampCountInBars(countInBarsRef.current);
+    const totalCountInMainBeats = configuredCountInBars * Math.max(1, numMainBeatsRef.current);
+    const totalCountInSteps = totalCountInMainBeats * Math.max(1, subdivisionsPerBeatRef.current);
+    isCountingInRef.current = totalCountInSteps > 0;
+    countInTotalStepsRef.current = totalCountInSteps;
+    countInStepsRemainingRef.current = totalCountInSteps;
+    setIsCountingIn(totalCountInSteps > 0);
+    setCountInBeatsRemaining(totalCountInMainBeats);
+
     nextNoteTimeRef.current = ctx.currentTime + 0.03;
     schedulerIntervalRef.current = window.setInterval(scheduleAudioTick, LOOKAHEAD_MS);
     scheduleAudioTick();
@@ -808,7 +1003,7 @@ const InteractiveMetronome = () => {
 
   useEffect(() => {
     if (!isPlaying) {
-      stopTransport();
+      stopTransport({ resetPosition: resetToFirstBeatOnStartRef.current });
       return;
     }
 
@@ -1031,6 +1226,14 @@ const InteractiveMetronome = () => {
     );
   };
 
+  const updateBeatAccent = (index: number, accent: number) => {
+    setBeatPatterns((previousPatterns) =>
+      previousPatterns.map((pattern, patternIndex) =>
+        patternIndex === index ? { ...pattern, accent: clampAccent(accent) } : pattern
+      )
+    );
+  };
+
   const createPresetId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -1162,6 +1365,11 @@ const InteractiveMetronome = () => {
                 {isPlaying ? <Pause size={32} /> : <Play size={32} />}
               </button>
               <span className="text-sm text-gray-400">Play / Pause</span>
+              {isCountingIn && (
+                <span className="mt-1 text-xs font-medium text-amber-300">
+                  Count-in: {countInBeatsRemaining}
+                </span>
+              )}
             </div>
             
             <div className="flex flex-col items-center">
@@ -1221,6 +1429,50 @@ const InteractiveMetronome = () => {
                 step="0.01"
                 className="w-full max-w-xs"
               />
+            </div>
+          </div>
+
+          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded bg-slate-700/60 p-3">
+              <label className="mb-2 block text-sm text-gray-300">Count-in</label>
+              <select
+                value={countInBars}
+                onChange={(e) => setCountInBars(clampCountInBars(parseInt(e.target.value) || 0))}
+                className="w-full rounded bg-slate-600 px-3 py-2 text-white"
+              >
+                <option value="0">Off</option>
+                <option value="1">1 bar</option>
+                <option value="2">2 bars</option>
+              </select>
+            </div>
+
+            <div className="rounded bg-slate-700/60 p-3">
+              <label className="mb-2 block text-sm text-gray-300">
+                Swing ({Math.round(swingAmount * 100)}%)
+              </label>
+              <input
+                type="range"
+                value={swingAmount}
+                onChange={(e) => setSwingAmount(clampSwingAmount(parseFloat(e.target.value)))}
+                min="0"
+                max="0.45"
+                step="0.01"
+                className="w-full"
+              />
+              <div className="mt-1 text-xs text-gray-400">Delays off-beats for a shuffled feel</div>
+            </div>
+
+            <div className="rounded bg-slate-700/60 p-3">
+              <label className="mb-2 block text-sm text-gray-300">Start Position</label>
+              <label className="flex items-center gap-2 text-sm text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={resetToFirstBeatOnStart}
+                  onChange={(e) => setResetToFirstBeatOnStart(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Reset to beat 1 when playback starts
+              </label>
             </div>
           </div>
 
@@ -1383,6 +1635,21 @@ const InteractiveMetronome = () => {
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="min-w-[180px]">
+                    <label className="text-sm text-gray-400 block mb-1">
+                      Accent {Math.round(pattern.accent * 100)}%
+                    </label>
+                    <input
+                      type="range"
+                      value={pattern.accent}
+                      onChange={(e) => updateBeatAccent(beatIndex, parseFloat(e.target.value))}
+                      min={MIN_ACCENT}
+                      max={MAX_ACCENT}
+                      step="0.01"
+                      className="w-full"
+                    />
                   </div>
 
                   <button
