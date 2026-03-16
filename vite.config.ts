@@ -9,7 +9,7 @@ export default defineConfig({
   base: process.env.GITHUB_ACTIONS ? githubPagesBase : '/',
   plugins: [react()],
   server: {
-    port: 8080,
+    port: 8085,
     strictPort: true
   }
 });

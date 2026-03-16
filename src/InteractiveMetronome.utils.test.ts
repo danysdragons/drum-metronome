@@ -18,6 +18,7 @@ describe('metronome helpers', () => {
 
     expect(pattern).toHaveLength(8);
     expect(pattern.map((beat) => beat.beat)).toEqual(['1', 'e', '&', 'a', '2', 'e', '&', 'a']);
+    expect(pattern.every((beat) => beat.color === 'theme')).toBe(true);
   });
 
   it('returns unique preset names with numeric suffixes', () => {
@@ -78,8 +79,10 @@ describe('metronome helpers', () => {
     expect(parsed?.countInBars).toBe(0);
     expect(parsed?.resetToFirstBeatOnStart).toBe(true);
     expect(parsed?.beatPatterns[0]?.sounds[0]?.volume).toBe(1);
+    expect(parsed?.beatPatterns[0]?.color).toBe('red');
     expect(parsed?.beatPatterns[0]?.accent).toBe(1.15);
     expect(parsed?.presets[0]?.beatPatterns[0]?.sounds[0]?.volume).toBe(0);
+    expect(parsed?.presets[0]?.beatPatterns[0]?.color).toBe('theme');
     expect(parsed?.presets[0]?.beatPatterns[0]?.accent).toBe(1.15);
     expect(parsed?.selectedPresetId).toBe('');
   });

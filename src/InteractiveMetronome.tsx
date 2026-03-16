@@ -19,6 +19,7 @@ type VisualShape = 'circle' | 'square';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type EditorMode = 'detailed' | 'compact';
 type ThemePreset = 'studio' | 'sunset' | 'mint';
+type BeatColor = 'theme' | 'blue' | 'red' | 'green' | 'yellow' | 'purple' | 'gray' | 'orange' | 'pink';
 
 interface BeatSound {
   type: SoundType;
@@ -29,7 +30,7 @@ interface BeatPattern {
   beat: string;
   isMainBeat: boolean;
   sounds: BeatSound[];
-  color: string;
+  color: BeatColor;
   accent: number;
 }
 
@@ -76,47 +77,77 @@ const DEFAULT_THEME_PRESET: ThemePreset = 'studio';
 const DEFAULT_SWING_AMOUNT = 0;
 const DEFAULT_COUNT_IN_BARS = 0;
 const DEFAULT_RESET_TO_FIRST_BEAT_ON_START = true;
-const DEFAULT_COLOR = 'bg-blue-500';
+const DEFAULT_COLOR: BeatColor = 'theme';
 const MASTER_OUTPUT_BOOST = 2.5;
 const MAX_TAP_INTERVAL_MS = 2000;
 const MAX_TAP_SAMPLES = 8;
 const MAX_HISTORY_ENTRIES = 100;
 const DEFAULT_MAIN_BEAT_ACCENT = 1.15;
 const DEFAULT_SUB_BEAT_ACCENT = 1;
+const BEAT_COLOR_CLASS_MAP: Record<BeatColor, string> = {
+  theme: '',
+  blue: 'bg-blue-500',
+  red: 'bg-red-500',
+  green: 'bg-green-500',
+  yellow: 'bg-yellow-500',
+  purple: 'bg-purple-500',
+  gray: 'bg-gray-400',
+  orange: 'bg-orange-500',
+  pink: 'bg-pink-500'
+};
+const LEGACY_BEAT_COLOR_MAP: Record<string, BeatColor> = {
+  'bg-blue-500': 'blue',
+  'bg-red-500': 'red',
+  'bg-green-500': 'green',
+  'bg-yellow-500': 'yellow',
+  'bg-purple-500': 'purple',
+  'bg-gray-400': 'gray',
+  'bg-orange-500': 'orange',
+  'bg-pink-500': 'pink'
+};
 const THEME_PRESETS: { value: ThemePreset; label: string }[] = [
   { value: 'studio', label: 'Studio' },
   { value: 'sunset', label: 'Sunset' },
   { value: 'mint', label: 'Mint' }
 ];
 
-const THEME_STYLE_MAP: Record<
-  ThemePreset,
-  {
-    pageBackground: string;
-    card: string;
-    cardMuted: string;
-    primaryButton: string;
-    secondaryButton: string;
-    accentRing: string;
-    pulseOn: string;
-    pulseOff: string;
-    textMuted: string;
-    stickyBar: string;
-    beatIdleRing: string;
-  }
-> = {
+type ThemeStyle = {
+  pageBackground: string;
+  card: string;
+  cardMuted: string;
+  primaryButton: string;
+  secondaryButton: string;
+  destructiveButton: string;
+  accentRing: string;
+  pulseOn: string;
+  pulseOff: string;
+  textMuted: string;
+  stickyBar: string;
+  beatIdleRing: string;
+  defaultBeatColor: string;
+  rangeAccent: string;
+  mainBeatBorder: string;
+  soundStackBorder: string;
+};
+
+const THEME_STYLE_MAP: Record<ThemePreset, ThemeStyle> = {
   studio: {
     pageBackground: 'bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800',
     card: 'bg-slate-800/90 border border-slate-700/70',
     cardMuted: 'bg-slate-700/65',
     primaryButton: 'bg-blue-600 hover:bg-blue-700',
     secondaryButton: 'bg-slate-600 hover:bg-slate-500',
+    destructiveButton: 'bg-blue-700 hover:bg-blue-600',
     accentRing: 'ring-blue-300/80',
     pulseOn: 'bg-blue-400 shadow-blue-500/50',
     pulseOff: 'bg-blue-900',
     textMuted: 'text-slate-400',
     stickyBar: 'bg-slate-900/90 border-slate-700/80',
-    beatIdleRing: 'ring-white'
+    beatIdleRing: 'ring-white',
+    defaultBeatColor: 'bg-blue-500',
+    rangeAccent: 'accent-blue-400',
+    mainBeatBorder: 'border-blue-400',
+    soundStackBorder: 'border-slate-500'
   },
   sunset: {
     pageBackground: 'bg-gradient-to-br from-rose-950 via-orange-900 to-amber-900',
@@ -124,12 +155,17 @@ const THEME_STYLE_MAP: Record<
     cardMuted: 'bg-zinc-800/75',
     primaryButton: 'bg-orange-600 hover:bg-orange-500',
     secondaryButton: 'bg-zinc-700 hover:bg-zinc-600',
+    destructiveButton: 'bg-rose-700 hover:bg-rose-600',
     accentRing: 'ring-orange-200/80',
     pulseOn: 'bg-orange-300 shadow-orange-500/50',
     pulseOff: 'bg-orange-950',
     textMuted: 'text-orange-100/80',
     stickyBar: 'bg-zinc-950/90 border-orange-500/40',
-    beatIdleRing: 'ring-orange-100'
+    beatIdleRing: 'ring-orange-100',
+    defaultBeatColor: 'bg-rose-500',
+    rangeAccent: 'accent-rose-400',
+    mainBeatBorder: 'border-rose-400',
+    soundStackBorder: 'border-orange-300/40'
   },
   mint: {
     pageBackground: 'bg-gradient-to-br from-emerald-950 via-teal-900 to-cyan-900',
@@ -137,14 +173,49 @@ const THEME_STYLE_MAP: Record<
     cardMuted: 'bg-zinc-800/75',
     primaryButton: 'bg-emerald-600 hover:bg-emerald-500',
     secondaryButton: 'bg-zinc-700 hover:bg-zinc-600',
+    destructiveButton: 'bg-emerald-700 hover:bg-emerald-600',
     accentRing: 'ring-emerald-200/80',
     pulseOn: 'bg-emerald-300 shadow-emerald-500/55',
     pulseOff: 'bg-emerald-950',
     textMuted: 'text-emerald-100/80',
     stickyBar: 'bg-zinc-950/90 border-emerald-500/40',
-    beatIdleRing: 'ring-emerald-100'
+    beatIdleRing: 'ring-emerald-100',
+    defaultBeatColor: 'bg-emerald-500',
+    rangeAccent: 'accent-emerald-400',
+    mainBeatBorder: 'border-emerald-400',
+    soundStackBorder: 'border-emerald-300/40'
   }
 };
+
+const normalizeBeatColor = (value: unknown): BeatColor => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return DEFAULT_COLOR;
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue in BEAT_COLOR_CLASS_MAP) {
+    return trimmedValue as BeatColor;
+  }
+
+  return LEGACY_BEAT_COLOR_MAP[trimmedValue] ?? DEFAULT_COLOR;
+};
+
+const shouldMigrateLegacyDefaultColors = (value: unknown[]): boolean =>
+  value.length > 0 &&
+  value.every((pattern) => {
+    if (!isRecord(pattern)) {
+      return false;
+    }
+
+    return (
+      pattern.color === undefined ||
+      (typeof pattern.color === 'string' &&
+        (!pattern.color.trim() || pattern.color === 'bg-blue-500'))
+    );
+  });
+
+const resolveBeatColorClass = (color: BeatColor, theme: ThemeStyle): string =>
+  color === 'theme' ? theme.defaultBeatColor : BEAT_COLOR_CLASS_MAP[color];
 
 const DEFAULT_BEAT_PATTERNS: BeatPattern[] = [
   {
@@ -294,7 +365,7 @@ const parseBeatPattern = (value: unknown): BeatPattern | null => {
     beat,
     isMainBeat,
     sounds: parsedSounds,
-    color: typeof color === 'string' && color.trim() ? color : DEFAULT_COLOR,
+    color: normalizeBeatColor(color),
     accent:
       typeof accent === 'number' && Number.isFinite(accent)
         ? clampAccent(accent)
@@ -309,9 +380,18 @@ const parseBeatPatterns = (value: unknown): BeatPattern[] => {
     return [];
   }
 
-  return value
+  const parsedPatterns = value
     .map(parseBeatPattern)
     .filter((pattern): pattern is BeatPattern => pattern !== null);
+
+  if (!shouldMigrateLegacyDefaultColors(value)) {
+    return parsedPatterns;
+  }
+
+  return parsedPatterns.map((pattern) => ({
+    ...pattern,
+    color: DEFAULT_COLOR
+  }));
 };
 
 const parsePreset = (value: unknown): Preset | null => {
@@ -455,7 +535,7 @@ export const generateBeatPattern = (mainBeats: number, subdivisions: number): Be
         beat: label,
         isMainBeat: isMain,
         sounds: [{ type: 'click', volume: 0.7 }],
-        color: 'bg-blue-500',
+        color: DEFAULT_COLOR,
         accent: isMain ? DEFAULT_MAIN_BEAT_ACCENT : DEFAULT_SUB_BEAT_ACCENT
       });
     }
@@ -1465,7 +1545,7 @@ const InteractiveMetronome = () => {
     );
   };
 
-  const updateBeatColor = (index: number, color: string) => {
+  const updateBeatColor = (index: number, color: BeatColor) => {
     setBeatPatterns((previousPatterns) =>
       previousPatterns.map((pattern, patternIndex) =>
         patternIndex === index ? { ...pattern, color } : pattern
@@ -1545,15 +1625,16 @@ const InteractiveMetronome = () => {
     { value: 'beep', label: 'Beep' }
   ];
 
-  const colorOptions: { value: string; label: string }[] = [
-    { value: 'bg-blue-500', label: 'Blue' },
-    { value: 'bg-red-500', label: 'Red' },
-    { value: 'bg-green-500', label: 'Green' },
-    { value: 'bg-yellow-500', label: 'Yellow' },
-    { value: 'bg-purple-500', label: 'Purple' },
-    { value: 'bg-gray-400', label: 'Gray' },
-    { value: 'bg-orange-500', label: 'Orange' },
-    { value: 'bg-pink-500', label: 'Pink' }
+  const colorOptions: { value: BeatColor; label: string }[] = [
+    { value: 'theme', label: 'Theme' },
+    { value: 'blue', label: 'Blue' },
+    { value: 'red', label: 'Red' },
+    { value: 'green', label: 'Green' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'purple', label: 'Purple' },
+    { value: 'gray', label: 'Gray' },
+    { value: 'orange', label: 'Orange' },
+    { value: 'pink', label: 'Pink' }
   ];
   const theme = THEME_STYLE_MAP[themePreset];
 
@@ -1671,7 +1752,7 @@ const InteractiveMetronome = () => {
                 min={MIN_BPM}
                 max={MAX_BPM}
                 step="0.1"
-                className="w-full max-w-xs"
+                className={`w-full max-w-xs ${theme.rangeAccent}`}
               />
               <button
                 onClick={tapTempo}
@@ -1708,7 +1789,7 @@ const InteractiveMetronome = () => {
                 min="0"
                 max={MAX_MASTER_VOLUME}
                 step="0.01"
-                className="w-full max-w-xs"
+                className={`w-full max-w-xs ${theme.rangeAccent}`}
               />
             </div>
           </div>
@@ -1738,7 +1819,7 @@ const InteractiveMetronome = () => {
                 min="0"
                 max="0.45"
                 step="0.01"
-                className="w-full"
+                className={`w-full ${theme.rangeAccent}`}
               />
               <div className="mt-1 text-xs text-gray-400">Delays off-beats for a shuffled feel</div>
             </div>
@@ -1750,7 +1831,7 @@ const InteractiveMetronome = () => {
                   type="checkbox"
                   checked={resetToFirstBeatOnStart}
                   onChange={(e) => setResetToFirstBeatOnStart(e.target.checked)}
-                  className="h-4 w-4"
+                  className={`h-4 w-4 ${theme.rangeAccent}`}
                 />
                 Reset to beat 1 when playback starts
               </label>
@@ -1762,7 +1843,7 @@ const InteractiveMetronome = () => {
               <div
                 key={index}
                 className={`${pattern.isMainBeat ? 'w-16 h-16' : 'w-12 h-12'} ${visualShape === 'circle' ? 'rounded-full' : 'rounded-lg'} flex items-center justify-center font-bold ${pattern.isMainBeat ? 'text-xl' : 'text-sm'} transition-all ${
-                  pattern.color
+                  resolveBeatColorClass(pattern.color, theme)
                 } ${currentBeat === index && isPlaying ? `scale-125 ring-4 ${theme.beatIdleRing}` : 'scale-100'}`}
               >
                 {pattern.beat}
@@ -1894,7 +1975,7 @@ const InteractiveMetronome = () => {
                   <button
                     onClick={() => deletePreset(selectedPresetId)}
                     aria-label="Delete selected preset"
-                    className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors"
+                    className={`${theme.destructiveButton} rounded p-2 transition-colors`}
                     title="Delete preset"
                   >
                     <Trash2 size={16} />
@@ -1943,7 +2024,7 @@ const InteractiveMetronome = () => {
               />
               <button
                 onClick={savePreset}
-                className="bg-green-600 hover:bg-green-700 rounded px-4 py-2 transition-colors"
+                className={`${theme.primaryButton} rounded px-4 py-2 transition-colors`}
               >
                 Save
               </button>
@@ -1953,7 +2034,7 @@ const InteractiveMetronome = () => {
                   setNewPresetName('');
                 }}
                 aria-label="Close save preset dialog"
-                className="bg-gray-600 hover:bg-gray-700 rounded p-2 transition-colors"
+                className={`${theme.secondaryButton} rounded p-2 transition-colors`}
               >
                 <X size={20} />
               </button>
@@ -1965,7 +2046,7 @@ const InteractiveMetronome = () => {
               {beatPatterns.map((pattern, beatIndex) => (
                 <div
                   key={beatIndex}
-                  className={`${theme.cardMuted} rounded p-4 transition-transform duration-200 hover:-translate-y-0.5 ${pattern.isMainBeat ? 'border-l-4 border-blue-500' : ''}`}
+                  className={`${theme.cardMuted} rounded p-4 transition-transform duration-200 hover:-translate-y-0.5 ${pattern.isMainBeat ? `border-l-4 ${theme.mainBeatBorder}` : ''}`}
                 >
                   <div className="flex items-center gap-4 mb-3 flex-wrap">
                     <div className={`font-bold ${pattern.isMainBeat ? 'text-xl w-20' : 'text-lg w-16'}`}>
@@ -1976,7 +2057,7 @@ const InteractiveMetronome = () => {
                       <label className="text-sm text-gray-400 block mb-1">Color</label>
                       <select
                         value={pattern.color}
-                        onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
+                        onChange={(e) => updateBeatColor(beatIndex, e.target.value as BeatColor)}
                         className={`text-white px-3 py-2 rounded w-full ${theme.secondaryButton}`}
                       >
                         {colorOptions.map((opt) => (
@@ -1998,7 +2079,7 @@ const InteractiveMetronome = () => {
                         min={MIN_ACCENT}
                         max={MAX_ACCENT}
                         step="0.01"
-                        className="w-full"
+                        className={`w-full ${theme.rangeAccent}`}
                       />
                     </div>
 
@@ -2024,14 +2105,14 @@ const InteractiveMetronome = () => {
                       </button>
                       <button
                         onClick={() => addSoundToBeat(beatIndex)}
-                        className="bg-green-600 hover:bg-green-700 rounded px-3 py-2 flex items-center gap-2 transition-colors"
+                        className={`${theme.primaryButton} rounded px-3 py-2 flex items-center gap-2 transition-colors`}
                       >
                         <Plus size={16} /> Add Sound
                       </button>
                     </div>
                   </div>
 
-                  <div className="space-y-2 ml-4 border-l-2 border-slate-600 pl-4">
+                  <div className={`space-y-2 ml-4 border-l-2 pl-4 ${theme.soundStackBorder}`}>
                     {pattern.sounds.map((sound, soundIndex) => (
                       <div key={soundIndex} className={`${theme.secondaryButton} rounded p-3`}>
                         <div className="flex items-center gap-3 mb-2 flex-wrap">
@@ -2056,7 +2137,7 @@ const InteractiveMetronome = () => {
                             <button
                               onClick={() => removeSoundFromBeat(beatIndex, soundIndex)}
                               aria-label={`Remove sound ${soundIndex + 1} from beat ${pattern.beat}`}
-                              className="bg-red-600 hover:bg-red-700 rounded p-2 transition-colors mt-4"
+                              className={`${theme.destructiveButton} mt-4 rounded p-2 transition-colors`}
                               title="Remove sound"
                             >
                               <X size={16} />
@@ -2078,7 +2159,7 @@ const InteractiveMetronome = () => {
                             min="0"
                             max="1"
                             step="0.01"
-                            className="flex-1"
+                            className={`flex-1 ${theme.rangeAccent}`}
                           />
                         </div>
                       </div>
@@ -2106,7 +2187,7 @@ const InteractiveMetronome = () => {
                         <label className="mb-1 block text-xs text-gray-400">Color</label>
                         <select
                           value={pattern.color}
-                          onChange={(e) => updateBeatColor(beatIndex, e.target.value)}
+                          onChange={(e) => updateBeatColor(beatIndex, e.target.value as BeatColor)}
                           className={`w-full rounded px-2 py-2 text-sm text-white ${theme.secondaryButton}`}
                         >
                           {colorOptions.map((opt) => (
@@ -2139,7 +2220,7 @@ const InteractiveMetronome = () => {
                           min="0"
                           max="1"
                           step="0.01"
-                          className="w-full"
+                          className={`w-full ${theme.rangeAccent}`}
                         />
                       </div>
 
@@ -2154,7 +2235,7 @@ const InteractiveMetronome = () => {
                           min={MIN_ACCENT}
                           max={MAX_ACCENT}
                           step="0.01"
-                          className="w-full"
+                          className={`w-full ${theme.rangeAccent}`}
                         />
                       </div>
 
@@ -2181,7 +2262,7 @@ const InteractiveMetronome = () => {
                           </button>
                           <button
                             onClick={() => addSoundToBeat(beatIndex)}
-                            className="rounded bg-green-600 px-3 py-2 text-xs transition-colors hover:bg-green-500"
+                            className={`${theme.primaryButton} rounded px-3 py-2 text-xs transition-colors`}
                           >
                             + Sound
                           </button>
