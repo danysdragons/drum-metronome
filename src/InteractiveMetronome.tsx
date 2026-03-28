@@ -61,7 +61,6 @@ export interface PersistedMetronomeState {
 export const PERSISTENCE_VERSION = 1;
 const STORAGE_KEY = 'drum-metronome/state/v1';
 const MIN_BPM = 0.1;
-const MAX_BPM = 300;
 const MIN_MAIN_BEATS = 1;
 const MAX_MAIN_BEATS = 16;
 const MAX_MASTER_VOLUME = 1;
@@ -299,7 +298,7 @@ const SOUND_TYPES: SoundType[] = [
 
 const SOUND_TYPE_SET = new Set<SoundType>(SOUND_TYPES);
 
-const clampBpm = (value: number): number => Math.max(MIN_BPM, Math.min(MAX_BPM, value));
+const clampBpm = (value: number): number => Math.max(MIN_BPM, value);
 const clampMainBeats = (value: number): number =>
   Math.max(MIN_MAIN_BEATS, Math.min(MAX_MAIN_BEATS, value));
 const clampVolume = (value: number): number => Math.max(0, Math.min(1, value));
@@ -309,6 +308,21 @@ const clampCountInBars = (value: number): number =>
   Math.max(0, Math.min(MAX_COUNT_IN_BARS, value));
 const clampMasterVolume = (value: number): number =>
   Math.max(0, Math.min(MAX_MASTER_VOLUME, value));
+const getTempoSliderMax = (value: number): number => Math.max(300, Math.ceil(value + 50));
+export const formatTempoInputValue = (value: number): string => {
+  const roundedValue = Math.round(value * 10) / 10;
+
+  return Number.isInteger(roundedValue) ? String(roundedValue) : roundedValue.toFixed(1);
+};
+export const parseTempoInputValue = (value: string): number | null => {
+  const normalizedValue = value.trim().replace(/,/g, '.');
+  if (normalizedValue === '') {
+    return null;
+  }
+
+  const parsedValue = Number(normalizedValue);
+  return Number.isFinite(parsedValue) ? parsedValue : null;
+};
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -588,6 +602,7 @@ const InteractiveMetronome = () => {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(DEFAULT_BPM);
+  const [tempoInputValue, setTempoInputValue] = useState(() => formatTempoInputValue(DEFAULT_BPM));
   const [currentBeat, setCurrentBeat] = useState(0);
   const [visualPulse, setVisualPulse] = useState(false);
   const [visualShape, setVisualShape] = useState<VisualShape>(DEFAULT_VISUAL_SHAPE);
@@ -646,6 +661,7 @@ const InteractiveMetronome = () => {
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const historyReadyRef = useRef(false);
   const currentHistorySnapshotRef = useRef('');
+  const isTempoInputFocusedRef = useRef(false);
 
   useEffect(() => {
     beatPatternsRef.current = beatPatterns;
@@ -653,6 +669,12 @@ const InteractiveMetronome = () => {
 
   useEffect(() => {
     bpmRef.current = bpm;
+  }, [bpm]);
+
+  useEffect(() => {
+    if (!isTempoInputFocusedRef.current) {
+      setTempoInputValue(formatTempoInputValue(bpm));
+    }
   }, [bpm]);
 
   useEffect(() => {
@@ -1261,6 +1283,22 @@ const InteractiveMetronome = () => {
     setBpm((previousBpm) => clampBpm(previousBpm + step));
   };
 
+  const resetTempoInputValue = () => {
+    setTempoInputValue(formatTempoInputValue(bpm));
+  };
+
+  const commitTempoInputValue = () => {
+    const parsedTempo = parseTempoInputValue(tempoInputValue);
+    if (parsedTempo === null) {
+      resetTempoInputValue();
+      return;
+    }
+
+    const nextTempo = clampBpm(parsedTempo);
+    setBpm(nextTempo);
+    setTempoInputValue(formatTempoInputValue(nextTempo));
+  };
+
   const tapTempo = () => {
     const now = performance.now();
     const recentTaps = tapTimestampsRef.current
@@ -1735,22 +1773,71 @@ const InteractiveMetronome = () => {
             </div>
             
             <div className="flex flex-col items-center">
-              <label className="text-sm text-gray-400 mb-2">Tempo (BPM)</label>
+              <label htmlFor="tempo-input" className="text-sm text-gray-400 mb-2">
+                Tempo (BPM)
+              </label>
               <input
-                type="number"
-                value={bpm}
-                onChange={(e) => setBpm(clampBpm(parseFloat(e.target.value) || 120))}
+                id="tempo-input"
+                type="text"
+                inputMode="decimal"
+                value={tempoInputValue}
+                onChange={(e) => setTempoInputValue(e.target.value)}
+                onFocus={(e) => {
+                  isTempoInputFocusedRef.current = true;
+                  e.currentTarget.select();
+                }}
+                onBlur={() => {
+                  isTempoInputFocusedRef.current = false;
+                  commitTempoInputValue();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitTempoInputValue();
+                    e.currentTarget.blur();
+                    return;
+                  }
+
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    resetTempoInputValue();
+                    e.currentTarget.select();
+                    return;
+                  }
+
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const parsedTempo = parseTempoInputValue(tempoInputValue);
+                    const currentTempo = parsedTempo === null ? bpm : clampBpm(parsedTempo);
+                    const nextTempo = clampBpm(currentTempo + (e.shiftKey ? 5 : 1));
+                    setBpm(nextTempo);
+                    setTempoInputValue(formatTempoInputValue(nextTempo));
+                    return;
+                  }
+
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const parsedTempo = parseTempoInputValue(tempoInputValue);
+                    const currentTempo = parsedTempo === null ? bpm : clampBpm(parsedTempo);
+                    const nextTempo = clampBpm(currentTempo - (e.shiftKey ? 5 : 1));
+                    setBpm(nextTempo);
+                    setTempoInputValue(formatTempoInputValue(nextTempo));
+                  }
+                }}
                 className={`text-white px-4 py-2 rounded w-24 text-center text-xl font-bold mb-2 ${theme.cardMuted}`}
+                aria-describedby="tempo-input-help"
                 min={MIN_BPM}
-                max={MAX_BPM}
-                step="0.1"
+                spellCheck={false}
               />
+              <p id="tempo-input-help" className={`mb-2 max-w-xs text-center text-xs ${theme.textMuted}`}>
+                Type a tempo, press Enter to apply, or Esc to restore the current value.
+              </p>
               <input
                 type="range"
                 value={bpm}
                 onChange={(e) => setBpm(clampBpm(parseFloat(e.target.value)))}
                 min={MIN_BPM}
-                max={MAX_BPM}
+                max={getTempoSliderMax(bpm)}
                 step="0.1"
                 className={`w-full max-w-xs ${theme.rangeAccent}`}
               />

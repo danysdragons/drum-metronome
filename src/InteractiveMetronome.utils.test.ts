@@ -70,7 +70,7 @@ describe('metronome helpers', () => {
     );
 
     expect(parsed).not.toBeNull();
-    expect(parsed?.bpm).toBe(300);
+    expect(parsed?.bpm).toBe(1000);
     expect(parsed?.masterVolume).toBe(0);
     expect(parsed?.visualShape).toBe('circle');
     expect(parsed?.subdivisionsPerBeat).toBe(4);
