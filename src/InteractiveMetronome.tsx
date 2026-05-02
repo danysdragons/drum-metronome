@@ -18,7 +18,7 @@ type SoundType =
 type VisualShape = 'circle' | 'square';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type EditorMode = 'detailed' | 'compact';
-type ThemePreset = 'studio' | 'sunset' | 'mint';
+type ThemePreset = 'studio' | 'sunset' | 'mint' | 'electric' | 'copper' | 'polar';
 type BeatColor = 'theme' | 'blue' | 'red' | 'green' | 'yellow' | 'purple' | 'gray' | 'orange' | 'pink';
 
 interface BeatSound {
@@ -107,7 +107,10 @@ const LEGACY_BEAT_COLOR_MAP: Record<string, BeatColor> = {
 const THEME_PRESETS: { value: ThemePreset; label: string }[] = [
   { value: 'studio', label: 'Studio' },
   { value: 'sunset', label: 'Sunset' },
-  { value: 'mint', label: 'Mint' }
+  { value: 'mint', label: 'Mint' },
+  { value: 'electric', label: 'Electric' },
+  { value: 'copper', label: 'Copper' },
+  { value: 'polar', label: 'Polar' }
 ];
 
 type ThemeStyle = {
@@ -183,6 +186,60 @@ const THEME_STYLE_MAP: Record<ThemePreset, ThemeStyle> = {
     rangeAccent: 'accent-emerald-400',
     mainBeatBorder: 'border-emerald-400',
     soundStackBorder: 'border-emerald-300/40'
+  },
+  electric: {
+    pageBackground: 'bg-gradient-to-br from-zinc-950 via-fuchsia-950 to-cyan-950',
+    card: 'bg-zinc-950/85 border border-fuchsia-400/35',
+    cardMuted: 'bg-zinc-900/75',
+    primaryButton: 'bg-fuchsia-600 hover:bg-fuchsia-500',
+    secondaryButton: 'bg-cyan-950/80 hover:bg-cyan-900',
+    destructiveButton: 'bg-fuchsia-800 hover:bg-fuchsia-700',
+    accentRing: 'ring-fuchsia-200/80',
+    pulseOn: 'bg-fuchsia-300 shadow-fuchsia-500/55',
+    pulseOff: 'bg-fuchsia-950',
+    textMuted: 'text-cyan-100/80',
+    stickyBar: 'bg-zinc-950/90 border-fuchsia-400/40',
+    beatIdleRing: 'ring-cyan-100',
+    defaultBeatColor: 'bg-fuchsia-500',
+    rangeAccent: 'accent-fuchsia-400',
+    mainBeatBorder: 'border-fuchsia-400',
+    soundStackBorder: 'border-cyan-300/35'
+  },
+  copper: {
+    pageBackground: 'bg-gradient-to-br from-stone-950 via-neutral-900 to-red-950',
+    card: 'bg-stone-950/85 border border-amber-600/35',
+    cardMuted: 'bg-stone-800/75',
+    primaryButton: 'bg-amber-700 hover:bg-amber-600',
+    secondaryButton: 'bg-stone-700 hover:bg-stone-600',
+    destructiveButton: 'bg-red-800 hover:bg-red-700',
+    accentRing: 'ring-amber-200/80',
+    pulseOn: 'bg-amber-300 shadow-amber-500/50',
+    pulseOff: 'bg-red-950',
+    textMuted: 'text-amber-100/80',
+    stickyBar: 'bg-stone-950/90 border-amber-600/40',
+    beatIdleRing: 'ring-amber-100',
+    defaultBeatColor: 'bg-amber-600',
+    rangeAccent: 'accent-amber-500',
+    mainBeatBorder: 'border-amber-500',
+    soundStackBorder: 'border-amber-300/35'
+  },
+  polar: {
+    pageBackground: 'bg-gradient-to-br from-slate-950 via-cyan-950 to-emerald-950',
+    card: 'bg-slate-950/85 border border-cyan-300/35',
+    cardMuted: 'bg-slate-800/75',
+    primaryButton: 'bg-cyan-600 hover:bg-cyan-500',
+    secondaryButton: 'bg-slate-700 hover:bg-slate-600',
+    destructiveButton: 'bg-teal-800 hover:bg-teal-700',
+    accentRing: 'ring-cyan-100/80',
+    pulseOn: 'bg-cyan-200 shadow-cyan-400/55',
+    pulseOff: 'bg-cyan-950',
+    textMuted: 'text-cyan-100/80',
+    stickyBar: 'bg-slate-950/90 border-cyan-300/40',
+    beatIdleRing: 'ring-cyan-50',
+    defaultBeatColor: 'bg-cyan-400',
+    rangeAccent: 'accent-cyan-300',
+    mainBeatBorder: 'border-cyan-300',
+    soundStackBorder: 'border-cyan-200/35'
   }
 };
 
@@ -331,7 +388,7 @@ const clonePatterns = (patterns: BeatPattern[]): BeatPattern[] =>
 
 const clonePattern = (pattern: BeatPattern): BeatPattern => clonePatterns([pattern])[0];
 const isThemePreset = (value: unknown): value is ThemePreset =>
-  value === 'studio' || value === 'sunset' || value === 'mint';
+  THEME_PRESETS.some((preset) => preset.value === value);
 
 const clonePresets = (items: Preset[]): Preset[] =>
   items.map((preset) => ({

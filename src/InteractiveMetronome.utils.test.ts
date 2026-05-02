@@ -39,6 +39,7 @@ describe('metronome helpers', () => {
         bpm: 1000,
         masterVolume: -2,
         visualShape: 'triangle',
+        themePreset: 'electric',
         subdivisionsPerBeat: 8,
         numMainBeats: 0,
         beatPatterns: [
@@ -73,6 +74,7 @@ describe('metronome helpers', () => {
     expect(parsed?.bpm).toBe(1000);
     expect(parsed?.masterVolume).toBe(0);
     expect(parsed?.visualShape).toBe('circle');
+    expect(parsed?.themePreset).toBe('electric');
     expect(parsed?.subdivisionsPerBeat).toBe(4);
     expect(parsed?.numMainBeats).toBe(1);
     expect(parsed?.swingAmount).toBe(0);
