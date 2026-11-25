@@ -18,7 +18,7 @@ type SoundType =
 type VisualShape = 'circle' | 'square';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type EditorMode = 'detailed' | 'compact';
-type ThemePreset = 'studio' | 'sunset' | 'mint' | 'electric' | 'copper' | 'polar';
+type ThemePreset = (typeof THEME_PRESETS)[number]['value'];
 type BeatColor = 'theme' | 'blue' | 'red' | 'green' | 'yellow' | 'purple' | 'gray' | 'orange' | 'pink';
 
 interface BeatSound {
@@ -104,14 +104,20 @@ const LEGACY_BEAT_COLOR_MAP: Record<string, BeatColor> = {
   'bg-orange-500': 'orange',
   'bg-pink-500': 'pink'
 };
-const THEME_PRESETS: { value: ThemePreset; label: string }[] = [
+const THEME_PRESETS = [
   { value: 'studio', label: 'Studio' },
   { value: 'sunset', label: 'Sunset' },
   { value: 'mint', label: 'Mint' },
   { value: 'electric', label: 'Electric' },
   { value: 'copper', label: 'Copper' },
-  { value: 'polar', label: 'Polar' }
-];
+  { value: 'polar', label: 'Polar' },
+  { value: 'analog-workshop', label: 'Analog Workshop' },
+  { value: 'bauhaus', label: 'Bauhaus' },
+  { value: 'blueprint', label: 'Blueprint' },
+  { value: 'pocket-arcade', label: 'Pocket Arcade' },
+  { value: 'paper-ensemble', label: 'Paper Ensemble' },
+  { value: 'glass-observatory', label: 'Glass Observatory' }
+] as const;
 
 type ThemeStyle = {
   pageBackground: string;
@@ -130,6 +136,25 @@ type ThemeStyle = {
   rangeAccent: string;
   mainBeatBorder: string;
   soundStackBorder: string;
+};
+
+const MATERIAL_THEME_STYLE: ThemeStyle = {
+  pageBackground: 'material-theme',
+  card: 'material-panel',
+  cardMuted: 'material-well',
+  primaryButton: 'material-primary material-control',
+  secondaryButton: 'material-secondary material-control',
+  destructiveButton: 'material-danger material-control',
+  accentRing: '',
+  pulseOn: 'material-pulse-on',
+  pulseOff: 'material-pulse-off',
+  textMuted: 'material-muted',
+  stickyBar: 'material-sticky',
+  beatIdleRing: 'material-beat-ring',
+  defaultBeatColor: 'material-beat-default',
+  rangeAccent: 'material-accent',
+  mainBeatBorder: 'material-main-beat-border',
+  soundStackBorder: 'material-sound-border'
 };
 
 const THEME_STYLE_MAP: Record<ThemePreset, ThemeStyle> = {
@@ -240,7 +265,13 @@ const THEME_STYLE_MAP: Record<ThemePreset, ThemeStyle> = {
     rangeAccent: 'accent-cyan-300',
     mainBeatBorder: 'border-cyan-300',
     soundStackBorder: 'border-cyan-200/35'
-  }
+  },
+  'analog-workshop': MATERIAL_THEME_STYLE,
+  bauhaus: MATERIAL_THEME_STYLE,
+  blueprint: MATERIAL_THEME_STYLE,
+  'pocket-arcade': MATERIAL_THEME_STYLE,
+  'paper-ensemble': MATERIAL_THEME_STYLE,
+  'glass-observatory': MATERIAL_THEME_STYLE
 };
 
 const normalizeBeatColor = (value: unknown): BeatColor => {
@@ -1734,7 +1765,7 @@ const InteractiveMetronome = () => {
   const theme = THEME_STYLE_MAP[themePreset];
 
   return (
-    <div className={`min-h-screen ${theme.pageBackground} text-white p-4 pb-28 transition-colors duration-500 md:p-8 md:pb-8`}>
+    <div data-theme={themePreset} className={`min-h-screen ${theme.pageBackground} text-white p-4 pb-28 transition-colors duration-500 md:p-8 md:pb-8`}>
       <div className="max-w-6xl mx-auto motion-fade-up">
         <h1 className="text-4xl font-bold text-center mb-8">Interactive Metronome</h1>
         {audioError && (
@@ -1775,6 +1806,7 @@ const InteractiveMetronome = () => {
             <button
               key={presetOption.value}
               onClick={() => setThemePreset(presetOption.value)}
+              aria-pressed={themePreset === presetOption.value}
               className={`rounded-full px-3 py-1 text-xs transition-all duration-200 ${
                 themePreset === presetOption.value
                   ? `${theme.primaryButton} text-white shadow-lg`
@@ -1911,7 +1943,7 @@ const InteractiveMetronome = () => {
               <select
                 value={subdivisionsPerBeat}
                 onChange={(e) => updateSubdivisions(parseInt(e.target.value))}
-                className={`text-white px-4 py-2 rounded text-center text-xl font-bold mb-2 w-32 ${theme.cardMuted}`}
+                className={`text-white px-3 py-2 rounded text-center text-base font-bold mb-2 w-44 max-w-full ${theme.cardMuted}`}
               >
                 <option value="1">None (1)</option>
                 <option value="2">Eighths (2)</option>
@@ -1982,11 +2014,11 @@ const InteractiveMetronome = () => {
             </div>
           </div>
 
-          <div className="flex justify-center gap-1 flex-wrap mb-4">
+          <div className="beat-rail flex justify-center gap-1 flex-wrap mb-4">
             {beatPatterns.map((pattern, index) => (
               <div
                 key={index}
-                className={`${pattern.isMainBeat ? 'w-16 h-16' : 'w-12 h-12'} ${visualShape === 'circle' ? 'rounded-full' : 'rounded-lg'} flex items-center justify-center font-bold ${pattern.isMainBeat ? 'text-xl' : 'text-sm'} transition-all ${
+                className={`beat-marker ${pattern.isMainBeat ? 'w-16 h-16' : 'w-12 h-12'} ${visualShape === 'circle' ? 'rounded-full' : 'rounded-lg'} flex items-center justify-center font-bold ${pattern.isMainBeat ? 'text-xl' : 'text-sm'} transition-all ${
                   resolveBeatColorClass(pattern.color, theme)
                 } ${currentBeat === index && isPlaying ? `scale-125 ring-4 ${theme.beatIdleRing}` : 'scale-100'}`}
               >
