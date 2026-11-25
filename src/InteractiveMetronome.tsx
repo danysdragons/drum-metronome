@@ -42,6 +42,12 @@ interface Preset {
   numMainBeats: number;
 }
 
+type PresetAction =
+  | { type: 'create'; switchTo?: string }
+  | { type: 'rename' }
+  | { type: 'delete' }
+  | { type: 'switch'; presetId: string };
+
 export interface PersistedMetronomeState {
   version: number;
   bpm: number;
@@ -714,7 +720,8 @@ const InteractiveMetronome = () => {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState('');
   const [newPresetName, setNewPresetName] = useState('');
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [presetAction, setPresetAction] = useState<PresetAction | null>(null);
+  const [presetNotice, setPresetNotice] = useState<{ name: string; undoFrom: string } | null>(null);
   const [hasLoadedPersistedState, setHasLoadedPersistedState] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
@@ -794,6 +801,8 @@ const InteractiveMetronome = () => {
   }, [resetToFirstBeatOnStart]);
 
   const applyPersistedState = (restoredState: PersistedMetronomeState) => {
+    setPresetAction(null);
+    setPresetNotice(null);
     setBpm(restoredState.bpm);
     setMasterVolume(restoredState.masterVolume);
     setVisualShape(restoredState.visualShape);
@@ -1703,27 +1712,43 @@ const InteractiveMetronome = () => {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   };
 
-  const savePreset = () => {
-    const uniquePresetName = buildUniquePresetName(
-      newPresetName,
-      presets.map((preset) => preset.name)
-    );
-    if (uniquePresetName) {
-      const preset: Preset = {
-        id: createPresetId(),
-        name: uniquePresetName,
-        beatPatterns: clonePatterns(beatPatterns),
-        subdivisionsPerBeat,
-        numMainBeats
-      };
-      setPresets((previousPresets) => [...previousPresets, preset]);
-      setNewPresetName('');
-      setShowSaveDialog(false);
-      setSelectedPresetId(preset.id);
+  const selectedPreset = presets.find((preset) => preset.id === selectedPresetId);
+  const hasPresetChanges =
+    numMainBeats !== (selectedPreset?.numMainBeats ?? DEFAULT_MAIN_BEATS) ||
+    subdivisionsPerBeat !== (selectedPreset?.subdivisionsPerBeat ?? DEFAULT_SUBDIVISIONS) ||
+    JSON.stringify(beatPatterns) !== JSON.stringify(selectedPreset?.beatPatterns ?? DEFAULT_BEAT_PATTERNS);
+  const presetName = newPresetName.trim();
+  const suggestedPresetName = buildUniquePresetName(
+    presetName,
+    presets
+      .filter((preset) => presetAction?.type !== 'rename' || preset.id !== selectedPresetId)
+      .map((preset) => preset.name)
+  );
+  const hasNameConflict = suggestedPresetName !== presetName;
+
+  const getPresetPattern = () => ({
+    beatPatterns: clonePatterns(beatPatterns),
+    subdivisionsPerBeat,
+    numMainBeats
+  });
+
+  const openCreatePreset = (switchTo?: string) => {
+    setNewPresetName(selectedPreset?.name ?? '');
+    setPresetAction({ type: 'create', switchTo });
+  };
+
+  const updatePreset = () => {
+    if (!selectedPreset || !hasPresetChanges) {
+      return;
     }
+
+    const updated = { ...selectedPreset, ...getPresetPattern() };
+    setPresets((previous) => previous.map((preset) => preset.id === updated.id ? updated : preset));
+    setPresetNotice({ name: updated.name, undoFrom: currentHistorySnapshotRef.current });
   };
 
   const loadPreset = (presetId: string) => {
+    setPresetAction(null);
     if (presetId === '') {
       setSelectedPresetId('');
       return;
@@ -1737,11 +1762,51 @@ const InteractiveMetronome = () => {
     }
   };
 
+  const requestPresetSwitch = (presetId: string) => {
+    if (presetId && hasPresetChanges) {
+      setPresetAction({ type: 'switch', presetId });
+    } else {
+      loadPreset(presetId);
+    }
+  };
+
+  const saveAndSwitchPreset = (presetId: string) => {
+    if (selectedPreset) {
+      updatePreset();
+      loadPreset(presetId);
+    } else {
+      openCreatePreset(presetId);
+    }
+  };
+
+  const submitPresetName = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!presetName || hasNameConflict) {
+      return;
+    }
+
+    if (presetAction?.type === 'rename' && selectedPreset) {
+      setPresets((previous) => previous.map((preset) =>
+        preset.id === selectedPreset.id ? { ...preset, name: presetName } : preset
+      ));
+    } else if (presetAction?.type === 'create') {
+      const preset = { id: createPresetId(), name: presetName, ...getPresetPattern() };
+      setPresets((previous) => [...previous, preset]);
+      if (presetAction.switchTo) {
+        loadPreset(presetAction.switchTo);
+      } else {
+        setSelectedPresetId(preset.id);
+      }
+    }
+    setPresetAction(null);
+  };
+
   const deletePreset = (presetId: string) => {
     setPresets((previousPresets) => previousPresets.filter((preset) => preset.id !== presetId));
     if (selectedPresetId === presetId) {
       setSelectedPresetId('');
     }
+    setPresetAction(null);
   };
 
   const soundOptions: { value: SoundType; label: string }[] = [
@@ -2143,11 +2208,12 @@ const InteractiveMetronome = () => {
             </div>
             <div className="flex gap-3 items-center flex-wrap">
               <div className="flex gap-2 items-center">
-                <label className="text-sm text-gray-400">Preset:</label>
+                <label htmlFor="preset-select" className="text-sm text-gray-400">Preset</label>
                 <select
+                  id="preset-select"
                   value={selectedPresetId}
-                  onChange={(e) => loadPreset(e.target.value)}
-                  className={`text-white px-3 py-2 rounded ${theme.cardMuted}`}
+                  onChange={(e) => requestPresetSwitch(e.target.value)}
+                  className={`min-w-0 max-w-[12rem] text-white px-3 py-2 rounded ${theme.cardMuted}`}
                 >
                   <option value="">No preset selected</option>
                   {presets.map((preset) => (
@@ -2156,22 +2222,47 @@ const InteractiveMetronome = () => {
                     </option>
                   ))}
                 </select>
-                {selectedPresetId && (
-                  <button
-                    onClick={() => deletePreset(selectedPresetId)}
-                    aria-label="Delete selected preset"
-                    className={`${theme.destructiveButton} rounded p-2 transition-colors`}
-                    title="Delete preset"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                {selectedPreset && !presetAction && (
+                  <details className="relative z-10">
+                    <summary className={`${theme.secondaryButton} cursor-pointer rounded px-3 py-2 text-sm`}>
+                      Preset options
+                    </summary>
+                    <div className={`${theme.card} absolute right-0 mt-1 flex min-w-32 flex-col gap-1 rounded p-1`}>
+                      <button
+                        type="button"
+                        className={`${theme.secondaryButton} rounded px-3 py-2 text-sm`}
+                        onClick={() => {
+                          setNewPresetName(selectedPreset.name);
+                          setPresetAction({ type: 'rename' });
+                        }}
+                      >
+                        Rename…
+                      </button>
+                      <button
+                        type="button"
+                        className={`${theme.destructiveButton} flex items-center gap-2 rounded px-3 py-2 text-sm`}
+                        onClick={() => setPresetAction({ type: 'delete' })}
+                      >
+                        <Trash2 size={16} /> Delete…
+                      </button>
+                    </div>
+                  </details>
                 )}
               </div>
+              {selectedPreset && (
+                <button
+                  onClick={updatePreset}
+                  disabled={!hasPresetChanges || !!presetAction}
+                  className={`${theme.primaryButton} max-w-full break-words rounded px-4 py-2 transition-colors disabled:opacity-40`}
+                >
+                  {hasPresetChanges ? `Update “${selectedPreset.name}”` : 'Update Preset'}
+                </button>
+              )}
               <button
-                onClick={() => setShowSaveDialog(true)}
-                className={`${theme.primaryButton} rounded px-4 py-2 flex items-center gap-2 transition-colors`}
+                onClick={() => openCreatePreset()}
+                className={`${selectedPreset ? theme.secondaryButton : theme.primaryButton} rounded px-4 py-2 flex items-center gap-2 transition-colors`}
               >
-                <Save size={20} /> Save Preset
+                <Save size={20} /> {selectedPreset ? 'Save as New…' : 'Save New Preset…'}
               </button>
               <button
                 onClick={exportSettings}
@@ -2195,33 +2286,102 @@ const InteractiveMetronome = () => {
             </div>
           </div>
 
-          {showSaveDialog && (
-            <div className={`mb-4 rounded p-4 flex items-center gap-3 flex-wrap ${theme.cardMuted}`}>
-              <label className="text-sm text-gray-400">Preset Name:</label>
+          {hasPresetChanges && (
+            <p className={`mb-3 text-sm ${theme.textMuted}`}>Unsaved preset changes</p>
+          )}
+          {presetNotice && undoStack[undoStack.length - 1] === presetNotice.undoFrom && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+              <span role="status" className="break-all">Updated “{presetNotice.name}”</span>
+              <button
+                onClick={undo}
+                className={`${theme.secondaryButton} rounded px-3 py-1`}
+                aria-label="Undo preset update"
+              >
+                Undo
+              </button>
+            </div>
+          )}
+          {(presetAction?.type === 'create' || presetAction?.type === 'rename') && (
+            <form
+              onSubmit={submitPresetName}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setPresetAction(null);
+              }}
+              className={`mb-4 rounded p-4 flex items-center gap-3 flex-wrap ${theme.cardMuted}`}
+            >
+              <label htmlFor="preset-name" className="text-sm text-gray-400">Preset name</label>
               <input
+                id="preset-name"
                 type="text"
                 value={newPresetName}
                 onChange={(e) => setNewPresetName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && savePreset()}
                 placeholder="Enter preset name..."
-                className={`text-white px-3 py-2 rounded flex-1 min-w-[200px] ${theme.secondaryButton}`}
+                aria-invalid={hasNameConflict}
+                aria-describedby={hasNameConflict ? 'preset-name-conflict' : undefined}
+                className={`text-white px-3 py-2 rounded flex-1 min-w-[min(100%,12rem)] ${theme.secondaryButton}`}
                 autoFocus
               />
               <button
-                onClick={savePreset}
-                className={`${theme.primaryButton} rounded px-4 py-2 transition-colors`}
+                type="submit"
+                disabled={!presetName || hasNameConflict}
+                className={`${theme.primaryButton} rounded px-4 py-2 transition-colors disabled:opacity-40`}
               >
-                Save
+                {presetAction.type === 'rename' ? 'Rename Preset' : presetAction.switchTo ? 'Save and Switch' : 'Create Preset'}
               </button>
               <button
-                onClick={() => {
-                  setShowSaveDialog(false);
-                  setNewPresetName('');
-                }}
-                aria-label="Close save preset dialog"
-                className={`${theme.secondaryButton} rounded p-2 transition-colors`}
+                type="button"
+                onClick={() => setPresetAction(null)}
+                className={`${theme.secondaryButton} rounded px-3 py-2 transition-colors`}
               >
-                <X size={20} />
+                Cancel
+              </button>
+              {hasNameConflict && (
+                <div id="preset-name-conflict" className="flex w-full flex-wrap items-center gap-2 text-sm">
+                  <span>That name is already in use.</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewPresetName(suggestedPresetName)}
+                    className={`${theme.secondaryButton} max-w-full break-all rounded px-3 py-1`}
+                  >
+                    Use “{suggestedPresetName}”
+                  </button>
+                </div>
+              )}
+            </form>
+          )}
+          {presetAction?.type === 'switch' && (
+            <div className={`mb-4 flex flex-wrap items-center gap-3 rounded p-4 ${theme.cardMuted}`}>
+              <p role="status" className="w-full break-words">
+                Save changes before switching to “{presets.find((preset) => preset.id === presetAction.presetId)?.name}”?
+              </p>
+              <button
+                onClick={() => saveAndSwitchPreset(presetAction.presetId)}
+                className={`${theme.primaryButton} rounded px-3 py-2`}
+              >
+                Save and Switch
+              </button>
+              <button
+                onClick={() => loadPreset(presetAction.presetId)}
+                className={`${theme.secondaryButton} rounded px-3 py-2`}
+              >
+                Discard and Switch
+              </button>
+              <button onClick={() => setPresetAction(null)} className={`${theme.secondaryButton} rounded px-3 py-2`}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {presetAction?.type === 'delete' && selectedPreset && (
+            <div className={`mb-4 flex flex-wrap items-center gap-3 rounded p-4 ${theme.cardMuted}`}>
+              <p role="status" className="w-full break-words">Delete “{selectedPreset.name}” from your presets?</p>
+              <button
+                onClick={() => deletePreset(selectedPreset.id)}
+                className={`${theme.destructiveButton} rounded px-3 py-2`}
+              >
+                Delete Preset
+              </button>
+              <button onClick={() => setPresetAction(null)} className={`${theme.secondaryButton} rounded px-3 py-2`}>
+                Cancel
               </button>
             </div>
           )}
