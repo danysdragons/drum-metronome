@@ -1314,7 +1314,15 @@ const InteractiveMetronome = () => {
   const updateSubdivisions = (newSubdivisions: number) => {
     const safeSubdivisions = clampSubdivisions(newSubdivisions);
     setSubdivisionsPerBeat(safeSubdivisions);
-    setBeatPatterns(generateBeatPattern(numMainBeats, safeSubdivisions));
+    setBeatPatterns((previousPatterns) => {
+      const mainBeatsByNumber = new Map(
+        previousPatterns.filter((pattern) => pattern.isMainBeat).map((pattern) => [pattern.beat, pattern])
+      );
+
+      return generateBeatPattern(numMainBeats, safeSubdivisions).map((pattern) =>
+        pattern.isMainBeat ? mainBeatsByNumber.get(pattern.beat) ?? pattern : pattern
+      );
+    });
   };
 
   const updateMainBeats = (newMainBeats: number) => {
@@ -1939,8 +1947,9 @@ const InteractiveMetronome = () => {
             </div>
 
             <div className="flex flex-col items-center">
-              <label className="text-sm text-gray-400 mb-2">Subdivisions</label>
+              <label htmlFor="subdivisions" className="text-sm text-gray-400 mb-2">Subdivisions</label>
               <select
+                id="subdivisions"
                 value={subdivisionsPerBeat}
                 onChange={(e) => updateSubdivisions(parseInt(e.target.value))}
                 className={`text-white px-3 py-2 rounded text-center text-base font-bold mb-2 w-44 max-w-full ${theme.cardMuted}`}
